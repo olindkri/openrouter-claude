@@ -87,14 +87,28 @@ prompt_and_save_key() {
   return 0
 }
 
-# --- ensure Tavily Search MCP is registered (idempotent, once per machine) ---
+# --- per-launch Tavily MCP config (NOT registered at user scope) ---
 # Anthropic's built-in WebSearch tool only works on its first-party endpoint, so
-# it does nothing through OpenRouter. We register Tavily Search MCP at user scope
-# (free tier: 1000 queries/mo, no per-second cap). Get a key:
-#   https://app.tavily.com  ->  sign up  ->  Dashboard  ->  "API Keys" panel
+# it does nothing through OpenRouter. We inject Tavily as an MCP via --mcp-config
+# only for openrouter-claude launches — never globally — so other `claude`
+# invocations (ollama's launcher, plain `claude`, etc.) are unaffected.
+# Free tier: 1000 queries/mo, no per-second cap.
+# Get a key: https://app.tavily.com -> sign up -> Dashboard -> "API Keys" panel.
 TAVILY_KEY_FILE="$CONFIG_DIR/tavily-key"
-SEARCH_MARKER="$CONFIG_DIR/.search-registered"
+MCP_CONFIG_FILE="$CONFIG_DIR/mcp.json"
+GLOBAL_CLEANUP_MARKER="$CONFIG_DIR/.global-mcp-cleaned"
 mkdir -p "$CONFIG_DIR"
+
+# One-time: remove any user-scope Tavily registration left over from earlier
+# launcher versions (which registered globally and leaked into other claude
+# sessions). Runs once per machine.
+cleanup_global_mcp_once() {
+  [ -f "$GLOBAL_CLEANUP_MARKER" ] && return 0
+  command -v claude >/dev/null 2>&1 || return 0
+  claude mcp remove -s user tavily        >/dev/null 2>&1 || true
+  claude mcp remove -s user tavily-search >/dev/null 2>&1 || true
+  : > "$GLOBAL_CLEANUP_MARKER"
+}
 
 prompt_tavily_key() {
   # interactive only — silently skip in pipes / CI
@@ -122,28 +136,24 @@ prompt_tavily_key() {
   return 0
 }
 
-ensure_tavily_search() {
-  [ -f "$SEARCH_MARKER" ] && return 0
-  command -v claude >/dev/null 2>&1 || return 0
+# Write a session-scoped MCP config containing only Tavily, to be passed via
+# --mcp-config. Returns 0 if a usable config exists, 1 otherwise (so the exec
+# block knows whether to add the flag).
+prepare_mcp_config() {
   local key="${TAVILY_API_KEY:-}"
   [ -z "$key" ] && [ -f "$TAVILY_KEY_FILE" ] && key="$(tr -d '[:space:]' < "$TAVILY_KEY_FILE")"
   if [ -z "$key" ]; then
-    prompt_tavily_key || return 0
+    prompt_tavily_key || { rm -f "$MCP_CONFIG_FILE"; return 1; }
     key="$(tr -d '[:space:]' < "$TAVILY_KEY_FILE")"
   fi
-  [ -z "$key" ] && return 0
-  # Use Tavily's hosted remote MCP server over HTTP — much faster than spawning
-  # npx tavily-mcp on every Claude Code session start.
-  local url="https://mcp.tavily.com/mcp/?tavilyApiKey=$key"
-  # Drop any prior registration (incl. the old npx-based one) and re-add as remote.
-  claude mcp remove -s user tavily        >/dev/null 2>&1 || true
-  claude mcp remove -s user tavily-search >/dev/null 2>&1 || true
-  if claude mcp add -s user --transport http tavily "$url" >/dev/null 2>&1; then
-    : > "$SEARCH_MARKER"
-    echo "openrouter-claude: registered Tavily remote MCP." >&2
-  fi
+  [ -z "$key" ] && { rm -f "$MCP_CONFIG_FILE"; return 1; }
+  umask 077
+  printf '{"mcpServers":{"tavily":{"type":"http","url":"https://mcp.tavily.com/mcp/?tavilyApiKey=%s"}}}\n' "$key" \
+    > "$MCP_CONFIG_FILE"
 }
-ensure_tavily_search
+
+cleanup_global_mcp_once
+prepare_mcp_config || true
 
 # --- key ---
 KEY="${OPENROUTER_API_KEY:-}"
@@ -482,12 +492,18 @@ if [ "${OPENROUTER_CLAUDE_SAFE:-0}" = "1" ]; then SKIP_PERM_FLAG=""; fi
 
 # Disable Anthropic's server-side WebSearch tool — it's a no-op on OpenRouter
 # (Anthropic-only beta capability), and if it's visible the model picks it over
-# the Tavily MCP we registered. Opt out with OPENROUTER_CLAUDE_ALLOW_WEBSEARCH=1.
+# the Tavily MCP we register. Opt out with OPENROUTER_CLAUDE_ALLOW_WEBSEARCH=1.
 DISALLOW_FLAGS=()
 if [ "${OPENROUTER_CLAUDE_ALLOW_WEBSEARCH:-0}" != "1" ]; then
   DISALLOW_FLAGS=(--disallowedTools WebSearch)
 fi
 
+# Inject Tavily MCP for this launch only. Other `claude` invocations on this
+# machine see no Tavily, so e.g. ollama's launcher keeps its own search setup.
+MCP_FLAGS=()
+[ -f "$MCP_CONFIG_FILE" ] && MCP_FLAGS=(--mcp-config "$MCP_CONFIG_FILE")
+
 exec claude ${SKIP_PERM_FLAG:+"$SKIP_PERM_FLAG"} \
   ${DISALLOW_FLAGS[@]+"${DISALLOW_FLAGS[@]}"} \
+  ${MCP_FLAGS[@]+"${MCP_FLAGS[@]}"} \
   ${PASSTHRU[@]+"${PASSTHRU[@]}"}

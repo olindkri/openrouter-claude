@@ -28,12 +28,16 @@ $ModelsCache = Join-Path $ConfigDir 'models.json'
 $RankCache   = Join-Path $ConfigDir "rankings.v2.$View.tsv"
 if (-not (Test-Path $ConfigDir)) { New-Item -ItemType Directory -Path $ConfigDir | Out-Null }
 
-# --- ensure Tavily Search MCP is registered (idempotent, once per machine) ---
+# --- per-launch Tavily MCP config (NOT registered at user scope) ---
 # Anthropic's WebSearch only works on its first-party endpoint, not via OpenRouter.
-# Tavily (free tier 1000/mo, no per-second cap) gives every model reliable web search.
+# We inject Tavily as an MCP via --mcp-config only for openrouter-claude launches —
+# never globally — so other `claude` invocations (ollama's launcher, plain `claude`,
+# etc.) are unaffected.
+# Free tier: 1000 queries/mo, no per-second cap.
 # Get a key: https://app.tavily.com -> sign up -> Dashboard -> "API Keys" panel.
-$TavilyKeyFile = Join-Path $ConfigDir 'tavily-key'
-$SearchMarker  = Join-Path $ConfigDir '.search-registered'
+$TavilyKeyFile        = Join-Path $ConfigDir 'tavily-key'
+$McpConfigFile        = Join-Path $ConfigDir 'mcp.json'
+$GlobalCleanupMarker  = Join-Path $ConfigDir '.global-mcp-cleaned'
 
 function Prompt-TavilyKey {
   if (-not [Environment]::UserInteractive) { return $false }
@@ -55,30 +59,36 @@ function Prompt-TavilyKey {
   return $true
 }
 
-if (-not (Test-Path $SearchMarker) -and (Get-Command claude -ErrorAction SilentlyContinue)) {
-  $key = $env:TAVILY_API_KEY
-  if (-not $key -and (Test-Path $TavilyKeyFile)) {
+# One-time: remove any user-scope Tavily registration left over from earlier
+# launcher versions (which registered globally and leaked into other claude sessions).
+if (-not (Test-Path $GlobalCleanupMarker) -and (Get-Command claude -ErrorAction SilentlyContinue)) {
+  & claude mcp remove -s user tavily        *> $null
+  & claude mcp remove -s user tavily-search *> $null
+  New-Item -ItemType File -Path $GlobalCleanupMarker -Force | Out-Null
+}
+
+# Resolve a Tavily key (env > file > prompt) and write a session-scoped MCP config.
+$key = $env:TAVILY_API_KEY
+if (-not $key -and (Test-Path $TavilyKeyFile)) {
+  $key = (Get-Content $TavilyKeyFile -Raw).Trim()
+}
+if (-not $key) {
+  if (Prompt-TavilyKey) {
     $key = (Get-Content $TavilyKeyFile -Raw).Trim()
   }
-  if (-not $key) {
-    if (Prompt-TavilyKey) {
-      $key = (Get-Content $TavilyKeyFile -Raw).Trim()
-    }
-  }
-  if ($key) {
-    # Use Tavily's hosted remote MCP server (HTTP transport) — much faster than
-    # spawning npx tavily-mcp on every Claude Code session start.
-    $url = "https://mcp.tavily.com/mcp/?tavilyApiKey=$key"
-    & claude mcp remove -s user tavily        *> $null
-    & claude mcp remove -s user tavily-search *> $null
-    try {
-      & claude mcp add -s user --transport http tavily "$url" *> $null
-      if ($LASTEXITCODE -eq 0) {
-        New-Item -ItemType File -Path $SearchMarker -Force | Out-Null
-        Write-Host "openrouter-claude: registered Tavily remote MCP." -ForegroundColor DarkGray
+}
+if ($key) {
+  $mcp = @{
+    mcpServers = @{
+      tavily = @{
+        type = 'http'
+        url  = "https://mcp.tavily.com/mcp/?tavilyApiKey=$key"
       }
-    } catch { }
-  }
+    }
+  } | ConvertTo-Json -Compress -Depth 5
+  Set-Content -Path $McpConfigFile -Value $mcp -NoNewline -Encoding ascii
+} elseif (Test-Path $McpConfigFile) {
+  Remove-Item $McpConfigFile -Force
 }
 
 # --- key prompt/save: factored so the picker can re-invoke on Ctrl+A ---
@@ -481,16 +491,23 @@ if (-not $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) { $env:CLAUDE_AUTOCOMPACT_PCT_OVE
 
 # Disable Anthropic's server-side WebSearch tool — it's a no-op on OpenRouter
 # (Anthropic-only beta capability), and if it's visible the model picks it over
-# the Tavily MCP we registered. Opt out with $env:OPENROUTER_CLAUDE_ALLOW_WEBSEARCH = '1'.
+# the Tavily MCP we register. Opt out with $env:OPENROUTER_CLAUDE_ALLOW_WEBSEARCH = '1'.
 $DisallowArgs = @()
 if ($env:OPENROUTER_CLAUDE_ALLOW_WEBSEARCH -ne '1') {
   $DisallowArgs = @('--disallowedTools','WebSearch')
 }
 
+# Inject Tavily MCP for this launch only. Other `claude` invocations on this
+# machine see no Tavily, so e.g. ollama's launcher keeps its own search setup.
+$McpArgs = @()
+if (Test-Path $McpConfigFile) {
+  $McpArgs = @('--mcp-config', $McpConfigFile)
+}
+
 # Pass --dangerously-skip-permissions by default. Opt out with $env:OPENROUTER_CLAUDE_SAFE = '1'.
 if ($env:OPENROUTER_CLAUDE_SAFE -eq '1') {
-  & claude @DisallowArgs @Rest
+  & claude @DisallowArgs @McpArgs @Rest
 } else {
-  & claude --dangerously-skip-permissions @DisallowArgs @Rest
+  & claude --dangerously-skip-permissions @DisallowArgs @McpArgs @Rest
 }
 exit $LASTEXITCODE

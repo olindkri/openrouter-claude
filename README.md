@@ -112,12 +112,14 @@ rm -rf ~/.openrouter-claude
 & "$env:LOCALAPPDATA\Programs\openrouter-claude\install.ps1" -Uninstall
 ```
 
-## Web search (Tavily, auto-registered)
+## Web search (Tavily, scoped to this launcher)
 
 Claude Code's built-in `WebSearch` tool runs server-side on Anthropic's
-infrastructure, so it doesn't work on OpenRouter models. To work around
-this, the launcher **auto-registers Tavily as an MCP server** on first
-run (once per machine, marker file `~/.openrouter-claude/.search-registered`).
+infrastructure, so it doesn't work on OpenRouter models. The launcher
+fixes this by **injecting Tavily as an MCP server only for openrouter-claude
+launches** — passed via `--mcp-config`, never registered globally. Other
+`claude` invocations on the same machine (Ollama's launcher, plain
+`claude`, etc.) see no Tavily and use whatever search they had configured.
 
 On first launch you'll be prompted for a Tavily API key:
 
@@ -125,20 +127,18 @@ On first launch you'll be prompted for a Tavily API key:
 2. Copy the API key from the dashboard
 3. Paste it when the launcher asks
 
-Free tier is **1000 queries/month** with no per-second rate cap, so a
-coding agent firing parallel searches won't get throttled within seconds.
+Free tier is **1000 queries/month** with no per-second rate cap.
 
-The launcher registers Tavily's **hosted remote MCP server** over HTTP:
-`claude mcp add -s user --transport http tavily "https://mcp.tavily.com/mcp/?tavilyApiKey=..."`.
-This is faster than spawning a local `npx tavily-mcp` process on every
-session start. After registration, every Claude Code session on every
-model gets web search via the `tavily` MCP tool.
+Under the hood: the key is saved to `~/.openrouter-claude/tavily-key`,
+and on every launch the launcher writes `~/.openrouter-claude/mcp.json`
+pointing at Tavily's hosted remote MCP (`https://mcp.tavily.com/mcp/?tavilyApiKey=...`)
+and passes that file via `claude --mcp-config`. The launcher also passes
+`--disallowedTools WebSearch` so the model can't pick the no-op
+Anthropic tool over Tavily.
 
-**Skip / set later:** press Enter at the prompt to skip. To set a key later,
-write it to `~/.openrouter-claude/tavily-key` (or
-`%USERPROFILE%\.openrouter-claude\tavily-key` on Windows) and re-launch.
-To rotate the key, delete that file plus the `.search-registered` marker
-next to it.
+**Skip / set later:** press Enter at the prompt to skip — search just
+won't be available in openrouter-claude sessions until you set a key.
+**Rotate:** edit or delete `~/.openrouter-claude/tavily-key` and re-launch.
 
 ## Auto-compaction on non-Anthropic models
 
