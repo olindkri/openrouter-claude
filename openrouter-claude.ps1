@@ -28,36 +28,54 @@ $ModelsCache = Join-Path $ConfigDir 'models.json'
 $RankCache   = Join-Path $ConfigDir "rankings.v2.$View.tsv"
 if (-not (Test-Path $ConfigDir)) { New-Item -ItemType Directory -Path $ConfigDir | Out-Null }
 
-# --- ensure DuckDuckGo MCP search is registered (idempotent, once per machine) ---
+# --- ensure Brave Search MCP is registered (idempotent, once per machine) ---
 # Anthropic's WebSearch only works on its first-party endpoint, not via OpenRouter.
-# DDG MCP gives every model search capability with no API key (scrapes DDG HTML).
-$DdgMarker = Join-Path $ConfigDir '.ddg-registered'
-if (-not (Test-Path $DdgMarker) -and (Get-Command claude -ErrorAction SilentlyContinue)) {
-  $runner = $null
-  if (Get-Command uvx -ErrorAction SilentlyContinue) {
-    $runner = @('uvx','duckduckgo-mcp-server')
-  } elseif (Get-Command pipx -ErrorAction SilentlyContinue) {
-    $runner = @('pipx','run','duckduckgo-mcp-server')
+# Brave Search MCP (free tier ~2000/mo) gives every model reliable web search.
+$BraveKeyFile = Join-Path $ConfigDir 'brave-key'
+$BraveMarker  = Join-Path $ConfigDir '.brave-registered'
+
+function Prompt-BraveKey {
+  if (-not [Environment]::UserInteractive) { return $false }
+  Write-Host ""
+  Write-Host "  Set up web search (Brave)" -ForegroundColor White
+  Write-Host "  ----------------------------------------------------" -ForegroundColor DarkGray
+  Write-Host "  Free tier ~2000 queries/mo. Get a key: https://brave.com/search/api/" -ForegroundColor DarkGray
+  Write-Host "  Press Enter to skip (you can set it later by writing it to $BraveKeyFile)." -ForegroundColor DarkGray
+  Write-Host ""
+  $k = (Read-Host "  Key").Trim()
+  if (-not $k) {
+    Write-Host "  (skipped - search registration deferred)" -ForegroundColor DarkGray
+    return $false
   }
-  if ($runner) {
-    $existing = & claude mcp list 2>$null | Out-String
-    if ($existing -match '(?m)^\s*ddg-search\b') {
-      New-Item -ItemType File -Path $DdgMarker -Force | Out-Null
-    } else {
+  Set-Content -Path $BraveKeyFile -Value $k -NoNewline -Encoding ascii
+  Write-Host "  saved to $BraveKeyFile" -ForegroundColor Green
+  Write-Host ""
+  return $true
+}
+
+if (-not (Test-Path $BraveMarker) -and (Get-Command claude -ErrorAction SilentlyContinue)) {
+  if (-not (Get-Command npx -ErrorAction SilentlyContinue)) {
+    Write-Host "openrouter-claude: 'npx' (Node.js) not found - skipping Brave Search MCP registration." -ForegroundColor DarkGray
+  } else {
+    $key = $env:BRAVE_API_KEY
+    if (-not $key -and (Test-Path $BraveKeyFile)) {
+      $key = (Get-Content $BraveKeyFile -Raw).Trim()
+    }
+    if (-not $key) {
+      if (Prompt-BraveKey) {
+        $key = (Get-Content $BraveKeyFile -Raw).Trim()
+      }
+    }
+    if ($key) {
+      & claude mcp remove -s user brave-search *> $null
       try {
-        & claude mcp add -s user ddg-search -- @runner *> $null
+        & claude mcp add -s user brave-search -e "BRAVE_API_KEY=$key" -- npx -y @modelcontextprotocol/server-brave-search *> $null
         if ($LASTEXITCODE -eq 0) {
-          New-Item -ItemType File -Path $DdgMarker -Force | Out-Null
-          Write-Host "openrouter-claude: registered DuckDuckGo MCP search (no API key needed)." -ForegroundColor DarkGray
+          New-Item -ItemType File -Path $BraveMarker -Force | Out-Null
+          Write-Host "openrouter-claude: registered Brave Search MCP." -ForegroundColor DarkGray
         }
       } catch { }
     }
-  } else {
-    Write-Host ""
-    Write-Host "Tip: install 'uv' to enable web search on any model via DuckDuckGo MCP:" -ForegroundColor DarkGray
-    Write-Host "       winget install --id=astral-sh.uv -e   # or: scoop install uv" -ForegroundColor DarkGray
-    Write-Host "     Then re-run openrouter-claude and search will be auto-registered." -ForegroundColor DarkGray
-    Write-Host ""
   }
 }
 

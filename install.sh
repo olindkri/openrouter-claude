@@ -94,23 +94,8 @@ if ! command -v fzf >/dev/null 2>&1; then
   fi
 fi
 
-# uv check (needed by the auto-registered DuckDuckGo MCP search server)
-if ! command -v uv >/dev/null 2>&1 && ! command -v uvx >/dev/null 2>&1 && ! command -v pipx >/dev/null 2>&1; then
-  if command -v brew >/dev/null 2>&1; then
-    echo ""
-    printf "Install 'uv' via Homebrew? (enables web search on any model via DuckDuckGo MCP, no API key) [Y/n] "
-    read -r ANS </dev/tty || ANS=""
-    case "$ANS" in
-      n|N|no|NO) echo "  skipped (later: brew install uv)" ;;
-      *)         brew install uv ;;
-    esac
-  else
-    echo ""
-    echo "Tip: install 'uv' to enable web search on any model via DuckDuckGo MCP:"
-    echo "    curl -LsSf https://astral.sh/uv/install.sh | sh"
-  fi
-fi
-
 echo ""
 echo "Done. Open a new terminal and run: openrouter-claude"
-echo "On first launch you'll be prompted for an OpenRouter API key (https://openrouter.ai/keys)."
+echo "On first launch you'll be prompted for two keys:"
+echo "  - OpenRouter API key (required) — https://openrouter.ai/keys"
+echo "  - Brave Search API key (optional, for web search) — https://brave.com/search/api/"

@@ -108,35 +108,12 @@ if (-not $NoFzfPrompt -and -not (Get-Command fzf -ErrorAction SilentlyContinue))
   }
 }
 
-# 5) offer to install uv (needed by the auto-registered DuckDuckGo MCP search server)
-if (-not (Get-Command uv -ErrorAction SilentlyContinue) `
-    -and -not (Get-Command uvx -ErrorAction SilentlyContinue) `
-    -and -not (Get-Command pipx -ErrorAction SilentlyContinue)) {
-  Write-Host ""
-  Write-Host "'uv' enables web search on any model via DuckDuckGo MCP (no API key)." -ForegroundColor Cyan
-  $hasWingetU = [bool](Get-Command winget -ErrorAction SilentlyContinue)
-  $hasScoopU  = [bool](Get-Command scoop  -ErrorAction SilentlyContinue)
-  if ($hasWingetU -or $hasScoopU) {
-    $ans = Read-Host "Install uv now? [Y/n]"
-    if ($ans -notmatch '^(n|no)$') {
-      try {
-        if ($hasWingetU) { winget install --id=astral-sh.uv -e --silent }
-        elseif ($hasScoopU) { scoop install uv }
-        Write-Host "  uv installed." -ForegroundColor Green
-      } catch {
-        Write-Host "  uv install failed; web search auto-registration will be skipped on first launch." -ForegroundColor Yellow
-      }
-    }
-  } else {
-    Write-Host "  Install manually:" -ForegroundColor DarkGray
-    Write-Host "    winget install --id=astral-sh.uv -e" -ForegroundColor DarkGray
-    Write-Host "    scoop install uv" -ForegroundColor DarkGray
-  }
-}
 
 Write-Host ""
 Write-Host "Installed." -ForegroundColor Cyan
 Write-Host "Open a NEW terminal (cmd, PowerShell, or Windows Terminal) and run:" -ForegroundColor Cyan
 Write-Host "    openrouter-claude" -ForegroundColor White
 Write-Host ""
-Write-Host "On first run it will prompt you for an OpenRouter API key (https://openrouter.ai/keys)." -ForegroundColor DarkGray
+Write-Host "On first run it will prompt for two keys:" -ForegroundColor DarkGray
+Write-Host "  - OpenRouter API key (required) - https://openrouter.ai/keys" -ForegroundColor DarkGray
+Write-Host "  - Brave Search API key (optional, for web search) - https://brave.com/search/api/" -ForegroundColor DarkGray

@@ -112,28 +112,33 @@ rm -rf ~/.openrouter-claude
 & "$env:LOCALAPPDATA\Programs\openrouter-claude\install.ps1" -Uninstall
 ```
 
-## Web search (auto-registered, no API key)
+## Web search (Brave, auto-registered)
 
 Claude Code's built-in `WebSearch` tool runs server-side on Anthropic's
 infrastructure, so it doesn't work on OpenRouter models. To work around
-this, the launcher **auto-registers a DuckDuckGo MCP server** on first run
-(once per machine, marker file in `~/.openrouter-claude/.ddg-registered`).
+this, the launcher **auto-registers Brave Search as an MCP server** on
+first run (once per machine, marker file in `~/.openrouter-claude/.brave-registered`).
 
-It runs `claude mcp add -s user ddg-search -- uvx duckduckgo-mcp-server`.
-The server scrapes DuckDuckGo HTML — no account, no key, no quota. The only
-prerequisite is `uv` (or `pipx`) so we can invoke the Python MCP server:
+On first launch you'll be prompted for a Brave Search API key. The free
+tier covers ~2000 queries/month, which is plenty for normal coding use:
 
-```bash
-brew install uv                          # macOS / Linux
-winget install --id=astral-sh.uv -e      # Windows
-# or:
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
+1. Go to https://brave.com/search/api/, sign up (30-sec, no card on free tier)
+2. Create a "Data for AI / Free" subscription
+3. Copy the API key and paste it when the launcher asks
 
-If `uv`/`pipx` is missing on first launch, the launcher prints a one-line
-hint and skips registration — re-run after installing `uv` and search will
-be wired up automatically. Once registered, every Claude Code session in
-every project gets DDG search; just ask the model to search.
+The launcher then runs `claude mcp add -s user brave-search -e BRAVE_API_KEY=...
+-- npx -y @modelcontextprotocol/server-brave-search`. After that, every
+Claude Code session on every model gets reliable web search.
+
+**Skip / set later:** press Enter at the prompt to skip. To set a key later,
+write it to `~/.openrouter-claude/brave-key` (or `%USERPROFILE%\.openrouter-claude\brave-key`
+on Windows) and re-launch. To rotate the key, delete that file plus the
+`.brave-registered` marker next to it.
+
+**Why Brave and not DuckDuckGo:** an earlier version of this launcher used
+DDG (no key needed). DuckDuckGo's bot detector blocks scraping aggressively,
+so in practice every other query returned "no results." Brave's free tier is
+fast, reliable, and the 30-second signup is worth it.
 
 ## Auto-compaction on non-Anthropic models
 
