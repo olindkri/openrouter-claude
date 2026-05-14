@@ -220,33 +220,63 @@ function Show-Table([string[]]$rows) {
 }
 
 # fzf picker: ollama-style multi-line entries. Returns canonical id or empty.
+# Uses .NET Process API because PowerShell has no '<' stdin-redirect operator
+# and we need to write raw NUL-delimited bytes to fzf's stdin while letting
+# fzf draw its TUI on the terminal (it reads keyboard from the console, not stdin).
 function Invoke-FzfPicker([string[]]$rows) {
-  if (-not (Get-Command fzf -ErrorAction SilentlyContinue)) { return $null }
-  $tmp = [IO.Path]::GetTempFileName()
+  $fzfCmd = Get-Command fzf -ErrorAction SilentlyContinue
+  if (-not $fzfCmd) { return $null }
+
+  # Render entries to a byte buffer (UTF-8, NUL-delimited multi-line entries).
+  $ms = New-Object IO.MemoryStream
+  $sw = New-Object IO.StreamWriter($ms, (New-Object Text.UTF8Encoding($false)))
+  foreach ($l in $rows) {
+    $f = $l -split "`t"
+    while ($f.Count -lt 7) { $f += '' }
+    $cid, $ctx, $price, $name, $rank, $tokens, $desc = $f[0..6]
+    $ctxs = Format-Ctx ([int64]$ctx)
+    if (-not $desc) { $desc = '(no description)' }
+    $C = [char]27 + '[36m'; $D = [char]27 + '[2m'; $R = [char]27 + '[0m'
+    $sw.Write("$C$cid$R$D · $ctxs ctx · `$$price/M in · #$rank · $tokens$R")
+    $sw.Write("`n")
+    $sw.Write("      $D$desc$R")
+    $sw.Write([char]0)
+  }
+  $sw.Flush()
+  $bytes = $ms.ToArray()
+  $sw.Dispose()
+
+  # Spawn fzf with stdin redirected (we feed bytes), stdout captured (selection),
+  # stderr unredirected so the TUI renders.
+  $psi = New-Object Diagnostics.ProcessStartInfo
+  $psi.FileName = $fzfCmd.Source
+  $psi.UseShellExecute        = $false
+  $psi.RedirectStandardInput  = $true
+  $psi.RedirectStandardOutput = $true
+  # ArgumentList isn't on PS5.1 so build a single Arguments string with quoting.
+  $args = @(
+    '--read0','--ansi','--height=80%','--reverse','--gap',
+    '--layout=reverse-list','--pointer=▸ ','--marker=✓',
+    '--prompt=Select model for Claude Code: ',
+    '--header=Type to filter — ↑↓ to move — Enter to launch — Esc to cancel',
+    '--no-info','--color=header:dim,prompt:bold,pointer:green:bold'
+  )
+  $psi.Arguments = ($args | ForEach-Object {
+    if ($_ -match '\s|"') { '"' + ($_ -replace '"','\"') + '"' } else { $_ }
+  }) -join ' '
+
+  $proc = [Diagnostics.Process]::Start($psi)
   try {
-    $sw = New-Object IO.StreamWriter($tmp, $false, [Text.Encoding]::UTF8)
-    foreach ($l in $rows) {
-      $f = $l -split "`t"
-      while ($f.Count -lt 7) { $f += '' }
-      $cid, $ctx, $price, $name, $rank, $tokens, $desc = $f[0..6]
-      $ctxs = Format-Ctx ([int64]$ctx)
-      if (-not $desc) { $desc = '(no description)' }
-      $C = [char]27 + '[36m'; $D = [char]27 + '[2m'; $R = [char]27 + '[0m'
-      $line1 = "$C$cid$R$D · $ctxs ctx · `$$price/M in · #$rank · $tokens$R"
-      $line2 = "      $D$desc$R"
-      $sw.Write($line1); $sw.Write("`n"); $sw.Write($line2); $sw.Write([char]0)
-    }
-    $sw.Close()
-    $picked = & fzf --read0 --ansi --height=80% --reverse --gap --layout=reverse-list `
-                    --pointer="▸ " --marker="✓" `
-                    --prompt="Select model for Claude Code: " `
-                    --header="Type to filter — ↑↓ to move — Enter to launch — Esc to cancel" `
-                    --no-info --color="header:dim,prompt:bold,pointer:green:bold" < $tmp
-    if (-not $picked) { return $null }
-    # Strip ANSI and grab id (first " · "-separated field on first line)
-    $first = ($picked -split "`n")[0] -replace [char]27 + '\[[0-9;]*m',''
-    return ($first -split ' · ')[0].Trim()
-  } finally { Remove-Item -Force $tmp -ErrorAction SilentlyContinue }
+    $proc.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+    $proc.StandardInput.Close()
+    $picked = $proc.StandardOutput.ReadToEnd()
+    $proc.WaitForExit()
+  } catch {
+    return $null
+  }
+  if ([string]::IsNullOrWhiteSpace($picked)) { return $null }
+  $first = ($picked -split "`r?`n")[0] -replace ([char]27 + '\[[0-9;]*m'),''
+  return ($first -split ' · ')[0].Trim()
 }
 
 if ($List) {
