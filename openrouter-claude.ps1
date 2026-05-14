@@ -256,6 +256,7 @@ function Invoke-FzfPicker([string[]]$rows) {
   # ArgumentList isn't on PS5.1 so build a single Arguments string with quoting.
   $args = @(
     '--read0','--ansi','--height=80%','--reverse','--gap=1','--gap-line= ',
+    '--gutter= ','--gutter-raw= ',
     '--layout=reverse-list','--pointer=  ','--marker=✓',
     '--prompt=Select model for Claude Code: ',
     '--header=Type to filter — ↑↓ to move — Enter to launch — Esc to cancel',
