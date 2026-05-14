@@ -408,6 +408,24 @@ $env:ANTHROPIC_API_KEY    = ''
 $env:ANTHROPIC_MODEL      = $Model
 if (-not $env:ANTHROPIC_SMALL_FAST_MODEL) { $env:ANTHROPIC_SMALL_FAST_MODEL = $Model }
 
+# Force client-side /compact triggers when routed to non-Anthropic models.
+# OpenRouter doesn't support Anthropic's context-management-2025-06-27 header,
+# so Claude Code never auto-compacts on its own. Override the detected window
+# (capped at ~180K — providers commonly serve less than the catalog claims)
+# and trigger compaction at 75% instead of ~92%.
+$ModelCtx = 180000
+if (Test-Path $RankCache) {
+  $row = (Get-Content $RankCache | Where-Object { $_ -match "^$([regex]::Escape($Model))`t" } | Select-Object -First 1)
+  if ($row) {
+    $foundCtx = [int]($row -split "`t")[1]
+    if ($foundCtx -gt 0) {
+      $ModelCtx = [Math]::Min($foundCtx, 180000)
+    }
+  }
+}
+if (-not $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS) { $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = "$ModelCtx" }
+if (-not $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) { $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '75' }
+
 # Pass --dangerously-skip-permissions by default. Opt out with $env:OPENROUTER_CLAUDE_SAFE = '1'.
 if ($env:OPENROUTER_CLAUDE_SAFE -eq '1') {
   & claude @Rest

@@ -112,6 +112,26 @@ rm -rf ~/.openrouter-claude
 & "$env:LOCALAPPDATA\Programs\openrouter-claude\install.ps1" -Uninstall
 ```
 
+## Auto-compaction on non-Anthropic models
+
+Claude Code's built-in auto-compaction is a server-side feature gated by an
+Anthropic-only beta header (`context-management-2025-06-27`). OpenRouter
+doesn't forward it, so on non-Anthropic models the session would otherwise
+just run out of context with no warning.
+
+The launcher works around this by exporting two undocumented Claude Code
+env vars before exec'ing `claude`:
+
+- `CLAUDE_CODE_MAX_CONTEXT_TOKENS` — set from the catalog `context_length`
+  of the chosen model, capped at 180000 (providers commonly serve less than
+  the catalog claims).
+- `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=75` — fire `/compact` at 75% instead of
+  the default ~92%, since alternative models pollute context faster.
+
+Override either by setting the env var yourself before running
+`openrouter-claude`. If you're hitting context walls anyway, run `/compact`
+manually every 10–15 turns or restart the session.
+
 ## Caveats
 
 - Tool-use / agentic features depend on the chosen model implementing the
