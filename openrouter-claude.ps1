@@ -37,7 +37,7 @@ if (-not (Test-Path $ConfigDir)) { New-Item -ItemType Directory -Path $ConfigDir
 # Get a key: https://app.tavily.com -> sign up -> Dashboard -> "API Keys" panel.
 $TavilyKeyFile        = Join-Path $ConfigDir 'tavily-key'
 $McpConfigFile        = Join-Path $ConfigDir 'mcp.json'
-$GlobalCleanupMarker  = Join-Path $ConfigDir '.global-mcp-cleaned'
+$GlobalCleanupMarker  = Join-Path $ConfigDir '.global-mcp-cleaned.v2'
 
 function Prompt-TavilyKey {
   if (-not [Environment]::UserInteractive) { return $false }
@@ -62,8 +62,9 @@ function Prompt-TavilyKey {
 # One-time: remove any user-scope Tavily registration left over from earlier
 # launcher versions (which registered globally and leaked into other claude sessions).
 if (-not (Test-Path $GlobalCleanupMarker) -and (Get-Command claude -ErrorAction SilentlyContinue)) {
-  & claude mcp remove -s user tavily        *> $null
-  & claude mcp remove -s user tavily-search *> $null
+  foreach ($name in @('tavily','tavily-search','ddg-search','brave-search')) {
+    & claude mcp remove -s user $name *> $null
+  }
   New-Item -ItemType File -Path $GlobalCleanupMarker -Force | Out-Null
 }
 

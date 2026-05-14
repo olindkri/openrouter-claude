@@ -96,7 +96,7 @@ prompt_and_save_key() {
 # Get a key: https://app.tavily.com -> sign up -> Dashboard -> "API Keys" panel.
 TAVILY_KEY_FILE="$CONFIG_DIR/tavily-key"
 MCP_CONFIG_FILE="$CONFIG_DIR/mcp.json"
-GLOBAL_CLEANUP_MARKER="$CONFIG_DIR/.global-mcp-cleaned"
+GLOBAL_CLEANUP_MARKER="$CONFIG_DIR/.global-mcp-cleaned.v2"
 mkdir -p "$CONFIG_DIR"
 
 # One-time: remove any user-scope Tavily registration left over from earlier
@@ -105,8 +105,9 @@ mkdir -p "$CONFIG_DIR"
 cleanup_global_mcp_once() {
   [ -f "$GLOBAL_CLEANUP_MARKER" ] && return 0
   command -v claude >/dev/null 2>&1 || return 0
-  claude mcp remove -s user tavily        >/dev/null 2>&1 || true
-  claude mcp remove -s user tavily-search >/dev/null 2>&1 || true
+  for name in tavily tavily-search ddg-search brave-search; do
+    claude mcp remove -s user "$name" >/dev/null 2>&1 || true
+  done
   : > "$GLOBAL_CLEANUP_MARKER"
 }
 
