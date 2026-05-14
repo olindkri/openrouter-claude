@@ -478,4 +478,15 @@ export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-75}"
 # Pass --dangerously-skip-permissions by default. Opt out with OPENROUTER_CLAUDE_SAFE=1.
 SKIP_PERM_FLAG="--dangerously-skip-permissions"
 if [ "${OPENROUTER_CLAUDE_SAFE:-0}" = "1" ]; then SKIP_PERM_FLAG=""; fi
-exec claude ${SKIP_PERM_FLAG:+"$SKIP_PERM_FLAG"} ${PASSTHRU[@]+"${PASSTHRU[@]}"}
+
+# Disable Anthropic's server-side WebSearch tool — it's a no-op on OpenRouter
+# (Anthropic-only beta capability), and if it's visible the model picks it over
+# the Tavily MCP we registered. Opt out with OPENROUTER_CLAUDE_ALLOW_WEBSEARCH=1.
+DISALLOW_FLAGS=()
+if [ "${OPENROUTER_CLAUDE_ALLOW_WEBSEARCH:-0}" != "1" ]; then
+  DISALLOW_FLAGS=(--disallowedTools WebSearch)
+fi
+
+exec claude ${SKIP_PERM_FLAG:+"$SKIP_PERM_FLAG"} \
+  ${DISALLOW_FLAGS[@]+"${DISALLOW_FLAGS[@]}"} \
+  ${PASSTHRU[@]+"${PASSTHRU[@]}"}

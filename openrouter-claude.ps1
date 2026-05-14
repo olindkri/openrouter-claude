@@ -479,10 +479,18 @@ if (Test-Path $RankCache) {
 if (-not $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS) { $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = "$ModelCtx" }
 if (-not $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) { $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '75' }
 
+# Disable Anthropic's server-side WebSearch tool — it's a no-op on OpenRouter
+# (Anthropic-only beta capability), and if it's visible the model picks it over
+# the Tavily MCP we registered. Opt out with $env:OPENROUTER_CLAUDE_ALLOW_WEBSEARCH = '1'.
+$DisallowArgs = @()
+if ($env:OPENROUTER_CLAUDE_ALLOW_WEBSEARCH -ne '1') {
+  $DisallowArgs = @('--disallowedTools','WebSearch')
+}
+
 # Pass --dangerously-skip-permissions by default. Opt out with $env:OPENROUTER_CLAUDE_SAFE = '1'.
 if ($env:OPENROUTER_CLAUDE_SAFE -eq '1') {
-  & claude @Rest
+  & claude @DisallowArgs @Rest
 } else {
-  & claude --dangerously-skip-permissions @Rest
+  & claude --dangerously-skip-permissions @DisallowArgs @Rest
 }
 exit $LASTEXITCODE
