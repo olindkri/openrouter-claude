@@ -28,26 +28,37 @@ $ModelsCache = Join-Path $ConfigDir 'models.json'
 $RankCache   = Join-Path $ConfigDir "rankings.v2.$View.tsv"
 if (-not (Test-Path $ConfigDir)) { New-Item -ItemType Directory -Path $ConfigDir | Out-Null }
 
-# --- key (interactive prompt + save if missing) ---
-$Key = $env:OPENROUTER_API_KEY
-if (-not $Key -and (Test-Path $KeyFile)) { $Key = (Get-Content $KeyFile -Raw).Trim() }
-if (-not $Key) {
+# --- key prompt/save: factored so the picker can re-invoke on Ctrl+A ---
+function Read-AndSaveApiKey {
+  param([switch]$Rotate)
   if (-not [Environment]::UserInteractive) {
     Write-Error "openrouter-claude: no OpenRouter key. Set `$env:OPENROUTER_API_KEY or write $KeyFile"
     exit 1
   }
-  Write-Host "openrouter-claude: no OpenRouter API key configured." -ForegroundColor Yellow
-  Write-Host "  Get one at: https://openrouter.ai/keys" -ForegroundColor DarkGray
-  $secure = Read-Host "Paste your OpenRouter key (input hidden, starts with sk-or-)" -AsSecureString
-  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-  try   { $Key = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr).Trim() }
-  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
-  if ([string]::IsNullOrWhiteSpace($Key)) { Write-Error "empty key, aborting."; exit 1 }
-  if (-not $Key.StartsWith('sk-or-')) {
-    $confirm = Read-Host "Key doesn't start with 'sk-or-'. Save anyway? [y/N]"
-    if ($confirm -notmatch '^(y|yes)$') { Write-Error "aborted."; exit 1 }
+  Write-Host ""
+  if ($Rotate) {
+    Write-Host "openrouter-claude: replace your OpenRouter API key." -ForegroundColor Yellow
+    Write-Host "  current key file: $KeyFile" -ForegroundColor DarkGray
+  } else {
+    Write-Host "openrouter-claude: no OpenRouter API key configured." -ForegroundColor Yellow
+    Write-Host "  Get one at: https://openrouter.ai/keys" -ForegroundColor DarkGray
   }
-  Set-Content -Path $KeyFile -Value $Key -NoNewline
+  $secure = Read-Host "Paste new key (input hidden, starts with sk-or-) or Enter to cancel" -AsSecureString
+  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+  try   { $new = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr).Trim() }
+  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+  if ([string]::IsNullOrWhiteSpace($new)) {
+    if ($Rotate) { Write-Host "  cancelled (key unchanged)." -ForegroundColor DarkGray; return $false }
+    Write-Error "empty key, aborting."; exit 1
+  }
+  if (-not $new.StartsWith('sk-or-')) {
+    $confirm = Read-Host "Key doesn't start with 'sk-or-'. Save anyway? [y/N]"
+    if ($confirm -notmatch '^(y|yes)$') {
+      if ($Rotate) { Write-Host "  aborted (key unchanged)." -ForegroundColor DarkGray; return $false }
+      Write-Error "aborted."; exit 1
+    }
+  }
+  Set-Content -Path $KeyFile -Value $new -NoNewline
   try {
     $acl = Get-Acl $KeyFile
     $acl.SetAccessRuleProtection($true, $false)
@@ -57,8 +68,17 @@ if (-not $Key) {
     $acl.AddAccessRule($rule)
     Set-Acl -Path $KeyFile -AclObject $acl
   } catch {}
+  $script:Key = $new
+  # Invalidate cached catalog so the next request uses the new key
+  if (Test-Path $ModelsCache) { Remove-Item -Force $ModelsCache -ErrorAction SilentlyContinue }
   Write-Host "openrouter-claude: saved key to $KeyFile" -ForegroundColor Cyan
+  return $true
 }
+
+# --- key ---
+$Key = $env:OPENROUTER_API_KEY
+if (-not $Key -and (Test-Path $KeyFile)) { $Key = (Get-Content $KeyFile -Raw).Trim() }
+if (-not $Key) { [void](Read-AndSaveApiKey) }
 
 # --- short aliases ---
 function Resolve-Model([string]$m) {
@@ -259,8 +279,9 @@ function Invoke-FzfPicker([string[]]$rows) {
     '--gutter= ','--gutter-raw= ',
     '--layout=reverse-list','--pointer=▎ ','--marker= ',
     '--prompt=Select model for Claude Code: ',
-    '--header=Type to filter — ↑↓ to move — Enter to launch — Esc to cancel',
-    '--no-info','--no-scrollbar','--color=header:dim,prompt:bold,pointer:cyan:bold,gutter:-1,bg+:-1,fg+:bright-white:bold,hl+:cyan:bold'
+    '--header=Type to filter — ↑↓ to move — Enter to launch — Esc to cancel — Ctrl+A to change API key',
+    '--no-info','--no-scrollbar','--expect=ctrl-a',
+    '--color=header:dim,prompt:bold,pointer:cyan:bold,gutter:-1,bg+:-1,fg+:bright-white:bold,hl+:cyan:bold'
   )
   $psi.Arguments = ($args | ForEach-Object {
     if ($_ -match '\s|"') { '"' + ($_ -replace '"','\"') + '"' } else { $_ }
@@ -275,9 +296,14 @@ function Invoke-FzfPicker([string[]]$rows) {
   } catch {
     return $null
   }
-  if ([string]::IsNullOrWhiteSpace($picked)) { return $null }
-  $first = ($picked -split "`r?`n")[0] -replace ([char]27 + '\[[0-9;]*m'),''
-  return ($first -split ' · ')[0].Trim()
+  if ([string]::IsNullOrWhiteSpace($picked)) { return @{ Key = $null; Id = $null } }
+  $lines = $picked -split "`r?`n"
+  # With --expect, line 1 is the key (empty for Enter), then the multi-line entry
+  $key   = $lines[0].Trim()
+  $body  = if ($lines.Count -gt 1) { $lines[1] } else { '' }
+  $idLine = $body -replace ([char]27 + '\[[0-9;]*m'),''
+  $id = ($idLine -split ' · ')[0].Trim()
+  return @{ Key = $key; Id = $id }
 }
 
 if ($List) {
@@ -308,12 +334,22 @@ if (-not $Model) {
   else {
     $rows = (Get-RankedTsv $View) | Select-Object -First $Top
     if (Get-Command fzf -ErrorAction SilentlyContinue) {
-      Write-Host ""
-      Write-Host "  openrouter-claude" -ForegroundColor White
-      Write-Host "  Live programming rankings · view: $View · top $Top" -ForegroundColor DarkGray
-      Write-Host ""
-      $Model = Invoke-FzfPicker $rows
-      if (-not $Model) { Write-Host "cancelled." -ForegroundColor Yellow; exit 0 }
+      while ($true) {
+        Write-Host ""
+        Write-Host "  openrouter-claude" -ForegroundColor White
+        Write-Host "  Live programming rankings · view: $View · top $Top" -ForegroundColor DarkGray
+        Write-Host ""
+        $pick = Invoke-FzfPicker $rows
+        if ($pick.Key -eq 'ctrl-a') {
+          if (Read-AndSaveApiKey -Rotate) {
+            $rows = (Get-RankedTsv $View) | Select-Object -First $Top
+          }
+          continue
+        }
+        if (-not $pick.Id) { Write-Host "cancelled." -ForegroundColor Yellow; exit 0 }
+        $Model = $pick.Id
+        break
+      }
     } else {
       Write-Host "Tip: install fzf for arrow-key picking:  winget install junegunn.fzf" -ForegroundColor DarkGray
       Show-Table $rows

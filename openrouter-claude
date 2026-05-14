@@ -24,6 +24,45 @@ KEY_FILE="$CONFIG_DIR/key"
 RANK_CACHE="$CONFIG_DIR/rankings.tsv"
 MODELS_CACHE="$CONFIG_DIR/models.json"
 
+# --- key prompt/save: factored so the picker can re-invoke it on Ctrl+A ---
+# $1 = "missing" (first-time prompt) | "rotate" (replace existing)
+prompt_and_save_key() {
+  local mode="$1" new
+  if [ "$mode" = "rotate" ]; then
+    echo "" >&2
+    echo "openrouter-claude: replace your OpenRouter API key." >&2
+    echo "  current key file: $KEY_FILE" >&2
+  else
+    echo "openrouter-claude: no OpenRouter API key configured." >&2
+    echo "  Get one at: https://openrouter.ai/keys" >&2
+  fi
+  printf "Paste new key (input hidden, starts with sk-or-) or Enter to cancel: " >&2
+  stty -echo 2>/dev/null || true
+  IFS= read -r new || true
+  stty echo 2>/dev/null || true
+  echo "" >&2
+  new="$(printf %s "$new" | tr -d '[:space:]')"
+  if [ -z "$new" ]; then
+    [ "$mode" = "rotate" ] && { echo "  cancelled (key unchanged)." >&2; return 1; }
+    echo "openrouter-claude: empty key, aborting." >&2
+    exit 1
+  fi
+  if ! printf %s "$new" | grep -q '^sk-or-'; then
+    printf "Key doesn't start with 'sk-or-'. Save anyway? [y/N]: " >&2
+    read -r CONFIRM
+    case "$CONFIRM" in y|Y|yes|YES) ;; *) echo "  aborted (key unchanged)." >&2; [ "$mode" = "rotate" ] && return 1 || exit 1 ;; esac
+  fi
+  mkdir -p "$CONFIG_DIR"
+  umask 077
+  printf %s "$new" > "$KEY_FILE"
+  chmod 600 "$KEY_FILE"
+  KEY="$new"
+  # Invalidate cached catalog so the next request uses the new key
+  rm -f "$MODELS_CACHE" 2>/dev/null || true
+  echo "openrouter-claude: saved key to $KEY_FILE" >&2
+  return 0
+}
+
 # --- key ---
 KEY="${OPENROUTER_API_KEY:-}"
 if [ -z "$KEY" ] && [ -f "$KEY_FILE" ]; then
@@ -35,28 +74,7 @@ if [ -z "$KEY" ]; then
     echo "  set OPENROUTER_API_KEY, or write the key to: $KEY_FILE" >&2
     exit 1
   fi
-  echo "openrouter-claude: no OpenRouter API key configured." >&2
-  echo "  Get one at: https://openrouter.ai/keys" >&2
-  printf "Paste your OpenRouter key (input hidden, starts with sk-or-): " >&2
-  stty -echo 2>/dev/null || true
-  IFS= read -r KEY || true
-  stty echo 2>/dev/null || true
-  echo "" >&2
-  KEY="$(printf %s "$KEY" | tr -d '[:space:]')"
-  if [ -z "$KEY" ]; then
-    echo "openrouter-claude: empty key, aborting." >&2
-    exit 1
-  fi
-  if ! printf %s "$KEY" | grep -q '^sk-or-'; then
-    printf "Key doesn't start with 'sk-or-'. Save anyway? [y/N]: " >&2
-    read -r CONFIRM
-    case "$CONFIRM" in y|Y|yes|YES) ;; *) echo "aborted." >&2; exit 1 ;; esac
-  fi
-  mkdir -p "$CONFIG_DIR"
-  umask 077
-  printf %s "$KEY" > "$KEY_FILE"
-  chmod 600 "$KEY_FILE"
-  echo "openrouter-claude: saved key to $KEY_FILE (chmod 600)" >&2
+  prompt_and_save_key missing
 fi
 
 # --- model aliases ---
@@ -250,7 +268,7 @@ fzf_pick() {
   local tsv="$1"
   # Use python (already a dep) — macOS BSD awk truncates output at first NUL byte,
   # which breaks fzf --read0 entry separation.
-  python3 - "$tsv" <<'PY' | fzf --read0 --ansi --height=80% --reverse --gap=1 --gap-line=" " --gutter=" " --gutter-raw=" " --layout=reverse-list --pointer="▎ " --marker=" " --prompt="Select model for Claude Code: " --header="Type to filter — ↑↓ to move — Enter to launch — Esc to cancel" --no-info --no-scrollbar --color="header:dim,prompt:bold,pointer:cyan:bold,gutter:-1,bg+:-1,fg+:bright-white:bold,hl+:cyan:bold" | sed -E $'s/\033\\[[0-9;]*m//g' | head -n1 | awk -F' · ' '{print $1}'
+  python3 - "$tsv" <<'PY' | fzf --read0 --ansi --height=80% --reverse --gap=1 --gap-line=" " --gutter=" " --gutter-raw=" " --layout=reverse-list --pointer="▎ " --marker=" " --prompt="Select model for Claude Code: " --header="Type to filter — ↑↓ to move — Enter to launch — Esc to cancel — Ctrl+A to change API key" --no-info --no-scrollbar --expect=ctrl-a --color="header:dim,prompt:bold,pointer:cyan:bold,gutter:-1,bg+:-1,fg+:bright-white:bold,hl+:cyan:bold"
 import sys
 C="\033[36m"; D="\033[2m"; R="\033[0m"
 out = sys.stdout.buffer
@@ -307,9 +325,22 @@ if [ -z "$MODEL" ]; then
       fi
 
       if command -v fzf >/dev/null 2>&1; then
-        echo "" >&2
-        printf "\n  \033[1mopenrouter-claude\033[0m\n  \033[2mLive programming rankings · view: %s · top %s\033[0m\n\n" "$RANK_VIEW" "$TOP_N" >&2
-        MODEL="$(fzf_pick "$TMPLIST")"
+        while true; do
+          printf "\n  \033[1mopenrouter-claude\033[0m\n  \033[2mLive programming rankings · view: %s · top %s\033[0m\n\n" "$RANK_VIEW" "$TOP_N" >&2
+          # fzf prints the pressed --expect key on line 1, then the entry; parse both.
+          PICK_OUT="$(fzf_pick "$TMPLIST")"
+          PRESSED_KEY="$(printf %s "$PICK_OUT" | head -n1)"
+          PICK_BODY="$(printf %s "$PICK_OUT" | tail -n +2 | sed -E $'s/\033\\[[0-9;]*m//g' | head -n1 | awk -F' · ' '{print $1}')"
+          if [ "$PRESSED_KEY" = "ctrl-a" ]; then
+            if prompt_and_save_key rotate; then
+              # Refresh leaderboard with the new key so cache reflects current account
+              fetch_ranked_tsv "$RANK_VIEW" | head -n "$TOP_N" > "$TMPLIST" || true
+            fi
+            continue
+          fi
+          MODEL="$PICK_BODY"
+          break
+        done
         [ -z "$MODEL" ] && { echo "openrouter-claude: cancelled." >&2; rm -f "$TMPLIST"; exit 0; }
       else
         echo "" >&2
