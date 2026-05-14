@@ -112,6 +112,41 @@ rm -rf ~/.openrouter-claude
 & "$env:LOCALAPPDATA\Programs\openrouter-claude\install.ps1" -Uninstall
 ```
 
+## Web search (no API key)
+
+Claude Code's built-in `WebSearch` tool runs server-side on Anthropic's
+infrastructure, so it doesn't work on OpenRouter models. To get search on
+*every* model, register the DuckDuckGo MCP server once:
+
+```bash
+openrouter-claude --setup-search        # macOS / Linux
+openrouter-claude -SetupSearch          # Windows PowerShell
+```
+
+This runs `claude mcp add -s user ddg-search -- uvx duckduckgo-mcp-server`.
+The server scrapes DuckDuckGo HTML — no account, no key, no quota. Requires
+`uv` (recommended; `brew install uv` / `winget install astral-sh.uv`) or
+`pipx`. Open a fresh Claude Code session afterward and ask it to search.
+
+## Route through claude-code-router
+
+If you want per-request-type routing (long-context → one model, background
+→ another) and proper auto-compaction, install
+[claude-code-router](https://github.com/musistudio/claude-code-router):
+
+```bash
+npm i -g @musistudio/claude-code-router
+ccr start
+openrouter-claude --router              # macOS / Linux
+openrouter-claude -Router               # Windows PowerShell
+```
+
+In router mode the launcher skips the OpenRouter key prompt and model
+picker — CCR handles both via its own config (`~/.claude-code-router/config.json`).
+Override the port with `--router-port 4567` or `CCR_PORT=4567`. Note: CCR
+**cannot** make non-Anthropic models do web search either — that's still a
+hard model-capability limit. Use `--setup-search` for that.
+
 ## Auto-compaction on non-Anthropic models
 
 Claude Code's built-in auto-compaction is a server-side feature gated by an
