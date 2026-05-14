@@ -1,0 +1,7 @@
+# local user state
+.openrouter-claude/
+*.log
+
+# OS junk
+.DS_Store
+Thumbs.db

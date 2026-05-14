@@ -1,0 +1,350 @@
+#!/usr/bin/env bash
+# openrouter-claude — launch Claude Code routed through OpenRouter,
+# with a model picker driven by OpenRouter's live programming leaderboard
+# (https://openrouter.ai/rankings/programming).
+#
+# Usage:
+#   openrouter-claude                       # interactive picker (top N from leaderboard)
+#   openrouter-claude -m kimi               # short alias
+#   openrouter-claude -m moonshotai/kimi-k2.6
+#   openrouter-claude --list                # print top N, exit
+#   openrouter-claude --list -n 50          # top 50
+#   openrouter-claude --view month          # ranking window: day|week|month|trending
+#   openrouter-claude --refresh             # bypass 6h cache
+#   openrouter-claude -- <claude args...>   # forward flags to claude
+#
+# Key resolution order:
+#   1. $OPENROUTER_API_KEY env var
+#   2. ~/.config/openrouter-claude/key  (chmod 600)
+
+set -euo pipefail
+
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/openrouter-claude"
+KEY_FILE="$CONFIG_DIR/key"
+RANK_CACHE="$CONFIG_DIR/rankings.tsv"
+MODELS_CACHE="$CONFIG_DIR/models.json"
+
+# --- key ---
+KEY="${OPENROUTER_API_KEY:-}"
+if [ -z "$KEY" ] && [ -f "$KEY_FILE" ]; then
+  KEY="$(tr -d '[:space:]' < "$KEY_FILE")"
+fi
+if [ -z "$KEY" ]; then
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    echo "openrouter-claude: no OpenRouter key found (non-interactive shell)." >&2
+    echo "  set OPENROUTER_API_KEY, or write the key to: $KEY_FILE" >&2
+    exit 1
+  fi
+  echo "openrouter-claude: no OpenRouter API key configured." >&2
+  echo "  Get one at: https://openrouter.ai/keys" >&2
+  printf "Paste your OpenRouter key (input hidden, starts with sk-or-): " >&2
+  stty -echo 2>/dev/null || true
+  IFS= read -r KEY || true
+  stty echo 2>/dev/null || true
+  echo "" >&2
+  KEY="$(printf %s "$KEY" | tr -d '[:space:]')"
+  if [ -z "$KEY" ]; then
+    echo "openrouter-claude: empty key, aborting." >&2
+    exit 1
+  fi
+  if ! printf %s "$KEY" | grep -q '^sk-or-'; then
+    printf "Key doesn't start with 'sk-or-'. Save anyway? [y/N]: " >&2
+    read -r CONFIRM
+    case "$CONFIRM" in y|Y|yes|YES) ;; *) echo "aborted." >&2; exit 1 ;; esac
+  fi
+  mkdir -p "$CONFIG_DIR"
+  umask 077
+  printf %s "$KEY" > "$KEY_FILE"
+  chmod 600 "$KEY_FILE"
+  echo "openrouter-claude: saved key to $KEY_FILE (chmod 600)" >&2
+fi
+
+# --- model aliases ---
+resolve_model() {
+  case "$1" in
+    kimi|kimi-k2)              echo "moonshotai/kimi-k2.6" ;;
+    kimi-thinking)             echo "moonshotai/kimi-k2-thinking" ;;
+    sonnet)                    echo "anthropic/claude-sonnet-4.6" ;;
+    opus)                      echo "anthropic/claude-opus-4.7" ;;
+    haiku)                     echo "anthropic/claude-haiku-4.5" ;;
+    deepseek|dsv4)             echo "deepseek/deepseek-v4-pro" ;;
+    deepseek-flash)            echo "deepseek/deepseek-v4-flash" ;;
+    glm|glm5)                  echo "z-ai/glm-5.1" ;;
+    qwen)                      echo "qwen/qwen3.6-plus" ;;
+    qwen-coder)                echo "qwen/qwen3-coder-plus" ;;
+    gemma)                     echo "google/gemma-4-31b-it" ;;
+    gemini)                    echo "google/gemini-2.5-pro" ;;
+    minimax)                   echo "minimax/minimax-m2.7" ;;
+    grok)                      echo "x-ai/grok-4.3" ;;
+    grok-code)                 echo "x-ai/grok-code-fast-1" ;;
+    gpt)                       echo "openai/gpt-5" ;;
+    *)                         echo "$1" ;;
+  esac
+}
+
+MODEL="${OPENROUTER_MODEL:-}"
+LIST_MODE=""
+RANK_VIEW="${OPENROUTER_RANK_VIEW:-week}"
+TOP_N="${OPENROUTER_TOP_N:-25}"
+REFRESH=0
+PASSTHRU=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -m|--model)   MODEL="$2"; shift 2 ;;
+    --list)       LIST_MODE="ranked"; shift ;;
+    --list-all)   LIST_MODE="all"; shift ;;
+    --view)       RANK_VIEW="$2"; shift 2 ;;
+    -n|--top)     TOP_N="$2"; shift 2 ;;
+    --refresh)    REFRESH=1; shift ;;
+    --) shift; PASSTHRU+=("$@"); break ;;
+    *)  PASSTHRU+=("$1"); shift ;;
+  esac
+done
+
+mkdir -p "$CONFIG_DIR"
+
+cache_age() {
+  local f="$1"
+  [ -f "$f" ] || { echo 999999; return; }
+  echo "$(($(date +%s) - $(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f")))"
+}
+
+# Fetch /api/v1/models JSON (6h cache).
+fetch_models_json() {
+  if [ "$REFRESH" -eq 0 ] && [ "$(cache_age "$MODELS_CACHE")" -lt 21600 ]; then
+    cat "$MODELS_CACHE"; return
+  fi
+  if curl -fsSL --max-time 15 -H "Authorization: Bearer $KEY" \
+       https://openrouter.ai/api/v1/models -o "$MODELS_CACHE.tmp"; then
+    mv "$MODELS_CACHE.tmp" "$MODELS_CACHE"
+    cat "$MODELS_CACHE"
+  elif [ -f "$MODELS_CACHE" ]; then
+    cat "$MODELS_CACHE"
+  else
+    echo "openrouter-claude: failed to fetch model catalog." >&2
+    exit 1
+  fi
+}
+
+# Fetch programming leaderboard, resolve permaslug -> canonical id.
+# Output TSV: <id>\t<context>\t<prompt $/M>\t<name>\t<rank>
+fetch_ranked_tsv() {
+  local view="$1"
+  # cache name carries a schema version so old caches are ignored after format changes
+  local cache_view="$CONFIG_DIR/rankings.v2.$view.tsv"
+  if [ "$REFRESH" -eq 0 ] && [ "$(cache_age "$cache_view")" -lt 21600 ]; then
+    cat "$cache_view"; return
+  fi
+  local html_file="$CONFIG_DIR/rank.$view.html"
+  if ! curl -fsSL --max-time 20 "https://openrouter.ai/rankings/programming?view=$view" -o "$html_file.tmp"; then
+    [ -f "$cache_view" ] && { cat "$cache_view"; return; }
+    echo "openrouter-claude: failed to fetch leaderboard." >&2
+    exit 1
+  fi
+  mv "$html_file.tmp" "$html_file"
+  fetch_models_json >/dev/null
+  python3 - "$MODELS_CACHE" "$html_file" > "$cache_view.tmp" <<'PY'
+# Reproduce the OpenRouter rankings page's own ordering:
+#   - chunk #2 carries per-day {model_permaslug, total_prompt_tokens, total_completion_tokens}
+#   - chunk #3 carries {slug, name} for human-readable names
+#   - the page itself sums tokens per permaslug and sorts desc
+import json, re, sys
+with open(sys.argv[1]) as f:
+    catalog = json.load(f)["data"]
+with open(sys.argv[2]) as f:
+    html = f.read()
+name_to_id = {m["name"]: m["id"] for m in catalog}
+id_set = {m["id"] for m in catalog}
+meta = {m["id"]: m for m in catalog}
+
+pushes = re.findall(r'self\.__next_f\.push\(\[1,"([\s\S]*?)"\]\)', html)
+all_text = "".join(json.loads('"' + p + '"') for p in pushes)
+
+def find_obj(s, idx):
+    d = 0; start = -1
+    for j in range(idx, -1, -1):
+        c = s[j]
+        if c == '}': d += 1
+        elif c == '{':
+            if d == 0: start = j; break
+            d -= 1
+    if start < 0: return None
+    dep = 0; end = -1
+    for j in range(start, len(s)):
+        c = s[j]
+        if c == '{': dep += 1
+        elif c == '}':
+            dep -= 1
+            if dep == 0: end = j + 1; break
+    if end < 0: return None
+    try: return json.loads(s[start:end])
+    except Exception: return None
+
+# permaslug -> human name (from chunk #3 entries that have request_count)
+perm_to_name = {}
+for m in re.finditer(r'"request_count":\d+', all_text):
+    o = find_obj(all_text, m.start())
+    if o and o.get("slug") and o.get("name"):
+        perm_to_name[o["slug"]] = o["name"]
+
+# sum tokens per permaslug (chunk #2 per-day rows)
+tokens = {}
+for m in re.finditer(r'"model_permaslug":"([^"]+)"[\s\S]{0,400}?"total_completion_tokens":(\d+)[\s\S]{0,400}?"total_prompt_tokens":(\d+)', all_text):
+    perm, comp, prom = m.group(1), int(m.group(2)), int(m.group(3))
+    tokens[perm] = tokens.get(perm, 0) + comp + prom
+
+def canonical(perm):
+    if perm in id_set: return perm
+    nm = perm_to_name.get(perm)
+    if nm and nm in name_to_id: return name_to_id[nm]
+    stripped = re.sub(r'-\d{8}$|-\d{4}-\d{2}-\d{2}$|-\d{4}$|-0\d{3}$', '', perm)
+    if stripped in id_set: return stripped
+    return None
+
+ranked = sorted(tokens.items(), key=lambda kv: -kv[1])
+rank = 0; seen_canon = set()
+for perm, tok in ranked:
+    cid = canonical(perm)
+    if not cid or cid in seen_canon: continue
+    seen_canon.add(cid)
+    rank += 1
+    mm = meta[cid]
+    ctx = mm.get("context_length") or 0
+    try: pm = float((mm.get("pricing") or {}).get("prompt", "0")) * 1_000_000
+    except Exception: pm = 0.0
+    tok_b = tok / 1_000_000_000
+    desc = (mm.get("description") or "").replace("\n", " ").replace("\t", " ").strip()
+    # First sentence or first 140 chars, whichever is shorter
+    cut = desc.find(". ")
+    if 0 < cut < 180: desc = desc[:cut+1]
+    else: desc = desc[:160].rstrip() + ("…" if len(desc) > 160 else "")
+    print(f"{cid}\t{ctx}\t{pm:.2f}\t{mm.get('name','')}\t{rank}\t{tok_b:.1f}B\t{desc}")
+PY
+  mv "$cache_view.tmp" "$cache_view"
+  cat "$cache_view"
+}
+
+# Print all OpenRouter models as TSV (used by --list-all)
+list_all_tsv() {
+  fetch_models_json | python3 -c '
+import json, sys
+for m in sorted(json.load(sys.stdin)["data"], key=lambda x: x["id"]):
+    ctx = m.get("context_length") or 0
+    try: pm = float((m.get("pricing") or {}).get("prompt","0")) * 1_000_000
+    except Exception: pm = 0.0
+    print(f"{m[\"id\"]}\t{ctx}\t{pm:.2f}\t{m.get(\"name\",\"\")}\t-")
+'
+}
+
+print_table() {
+  awk -F'\t' '
+    BEGIN { printf "%-4s %-44s %10s %10s %10s  %s\n", "#", "ID", "CTX", "$/M in", "TOKENS", "NAME" > "/dev/stderr" }
+    { printf "%-4d %-44s %10s %10s %10s  %s\n", NR, $1, $2, "$"$3, ($6==""?"-":$6), $4 > "/dev/stderr" }
+  '
+}
+
+# fzf-based interactive picker — ollama-style multi-line entries.
+# $1 = TSV file with rows: id\tctx\tprice\tname\trank\ttokens\tdesc
+# Returns selected model id on stdout (or empty if cancelled).
+fzf_pick() {
+  local tsv="$1"
+  # Use python (already a dep) — macOS BSD awk truncates output at first NUL byte,
+  # which breaks fzf --read0 entry separation.
+  python3 - "$tsv" <<'PY' | fzf --read0 --ansi --height=80% --reverse --gap --layout=reverse-list --pointer="▸ " --marker="✓" --prompt="Select model for Claude Code: " --header="Type to filter — ↑↓ to move — Enter to launch — Esc to cancel" --no-info --color="header:dim,prompt:bold,pointer:green:bold" | sed -E $'s/\033\\[[0-9;]*m//g' | head -n1 | awk -F' · ' '{print $1}'
+import sys
+C="\033[36m"; D="\033[2m"; R="\033[0m"
+out = sys.stdout.buffer
+with open(sys.argv[1]) as f:
+    for line in f:
+        parts = line.rstrip("\n").split("\t")
+        while len(parts) < 7: parts.append("")
+        cid, ctx, price, name, rank, tokens, desc = parts[:7]
+        try:
+            n = int(ctx)
+            if n >= 1_000_000:   ctxs = f"{n/1_000_000:.1f}M".replace(".0M","M")
+            elif n >= 1000:      ctxs = f"{n//1000}k"
+            else:                ctxs = str(n)
+        except Exception:
+            ctxs = ctx
+        meta = f" · {ctxs} ctx · ${price}/M in · #{rank} · {tokens}"
+        out.write(f"{C}{cid}{R}{D}{meta}{R}\n      {D}{desc or '(no description)'}{R}".encode("utf-8"))
+        out.write(b"\0")
+PY
+}
+
+if [ -n "$LIST_MODE" ]; then
+  if [ "$LIST_MODE" = "all" ]; then
+    list_all_tsv | print_table
+  else
+    fetch_ranked_tsv "$RANK_VIEW" | head -n "$TOP_N" | print_table
+    echo "" >&2
+    echo "(programming leaderboard, view=$RANK_VIEW, top=$TOP_N — change with --view / -n / --refresh)" >&2
+  fi
+  exit 0
+fi
+
+# Interactive picker if no model specified
+if [ -z "$MODEL" ]; then
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    MODEL="moonshotai/kimi-k2.6"
+  else
+    TMPLIST="$(mktemp)"
+    fetch_ranked_tsv "$RANK_VIEW" | head -n "$TOP_N" > "$TMPLIST"
+    if [ ! -s "$TMPLIST" ]; then
+      echo "openrouter-claude: leaderboard empty; using moonshotai/kimi-k2.6" >&2
+      MODEL="moonshotai/kimi-k2.6"
+    else
+      # Offer to install fzf once (~1MB, no deps); user can decline.
+      if ! command -v fzf >/dev/null 2>&1 && [ ! -f "$CONFIG_DIR/.fzf-declined" ] && command -v brew >/dev/null 2>&1; then
+        echo "" >&2
+        echo "openrouter-claude: 'fzf' enables arrow-key model picking (recommended)." >&2
+        printf "Install fzf via Homebrew now? [Y/n]: " >&2
+        read -r INSTALL
+        case "$INSTALL" in
+          n|N|no|NO) touch "$CONFIG_DIR/.fzf-declined"; echo "  skipped (won't ask again)" >&2 ;;
+          *) brew install fzf >&2 || echo "  install failed; falling back to numbered prompt" >&2 ;;
+        esac
+      fi
+
+      if command -v fzf >/dev/null 2>&1; then
+        echo "" >&2
+        echo "OpenRouter programming leaderboard (view=$RANK_VIEW, top=$TOP_N) — ↑↓ + Enter, type to filter" >&2
+        MODEL="$(fzf_pick "$TMPLIST")"
+        [ -z "$MODEL" ] && { echo "openrouter-claude: cancelled." >&2; rm -f "$TMPLIST"; exit 0; }
+      else
+        echo "" >&2
+      print_table < "$TMPLIST"
+      echo "" >&2
+      echo "(programming leaderboard, view=$RANK_VIEW)" >&2
+      printf "Pick model [number, full slug, or empty=#1]: " >&2
+      read -r CHOICE
+      if [ -z "$CHOICE" ]; then
+        MODEL="$(awk -F'\t' 'NR==1{print $1}' "$TMPLIST")"
+      elif [[ "$CHOICE" =~ ^[0-9]+$ ]]; then
+        MODEL="$(awk -F'\t' -v n="$CHOICE" 'NR==n{print $1}' "$TMPLIST")"
+        [ -z "$MODEL" ] && { echo "openrouter-claude: invalid selection." >&2; exit 1; }
+      else
+        MODEL="$CHOICE"
+      fi
+      fi
+    fi
+    rm -f "$TMPLIST"
+  fi
+fi
+MODEL="$(resolve_model "$MODEL")"
+
+if ! command -v claude >/dev/null 2>&1; then
+  echo "openrouter-claude: 'claude' CLI not found in PATH." >&2
+  echo "  install: npm i -g @anthropic-ai/claude-code" >&2
+  exit 1
+fi
+
+echo "openrouter-claude -> model=$MODEL  endpoint=https://openrouter.ai/api" >&2
+
+export ANTHROPIC_BASE_URL="https://openrouter.ai/api"
+export ANTHROPIC_AUTH_TOKEN="$KEY"
+export ANTHROPIC_API_KEY=""
+export ANTHROPIC_MODEL="$MODEL"
+export ANTHROPIC_SMALL_FAST_MODEL="${ANTHROPIC_SMALL_FAST_MODEL:-$MODEL}"
+
+exec claude ${PASSTHRU[@]+"${PASSTHRU[@]}"}
