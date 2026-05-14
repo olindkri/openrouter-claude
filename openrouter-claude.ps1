@@ -367,6 +367,7 @@ if (-not $Model) {
         Write-Host "  openrouter-claude" -ForegroundColor White
         Write-Host "  Live programming rankings · view: $View · top $Top" -ForegroundColor DarkGray
         Write-Host ""
+        Write-Host ""
         $pick = Invoke-FzfPicker $rows
         if ($pick.Key -eq 'ctrl-a') {
           if (Read-AndSaveApiKey -Rotate) {
