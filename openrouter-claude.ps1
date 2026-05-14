@@ -35,27 +35,54 @@ function Read-AndSaveApiKey {
     Write-Error "openrouter-claude: no OpenRouter key. Set `$env:OPENROUTER_API_KEY or write $KeyFile"
     exit 1
   }
+  $title = if ($Rotate) { 'Change OpenRouter API key' } else { 'Set OpenRouter API key' }
+  $rule  = '────────────────────────────────────────────────────'
   Write-Host ""
+  Write-Host "  🔑 $title" -ForegroundColor Cyan
+  Write-Host "  $rule" -ForegroundColor DarkGray
   if ($Rotate) {
-    Write-Host "openrouter-claude: replace your OpenRouter API key." -ForegroundColor Yellow
-    Write-Host "  current key file: $KeyFile" -ForegroundColor DarkGray
-  } else {
-    Write-Host "openrouter-claude: no OpenRouter API key configured." -ForegroundColor Yellow
-    Write-Host "  Get one at: https://openrouter.ai/keys" -ForegroundColor DarkGray
+    Write-Host "  Current key: " -NoNewline -ForegroundColor DarkGray
+    Write-Host "$KeyFile  " -NoNewline
+    Write-Host "(will be replaced)" -ForegroundColor DarkGray
   }
-  $secure = Read-Host "Paste new key (input hidden, starts with sk-or-) or Enter to cancel" -AsSecureString
-  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
-  try   { $new = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr).Trim() }
-  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+  Write-Host "  Get a key at: " -NoNewline -ForegroundColor DarkGray
+  Write-Host "https://openrouter.ai/keys" -ForegroundColor Cyan
+  Write-Host "  Esc" -NoNewline -ForegroundColor Yellow
+  Write-Host " cancels · " -NoNewline
+  Write-Host "Enter" -NoNewline -ForegroundColor Yellow
+  Write-Host " on empty also cancels"
+  Write-Host ""
+  Write-Host "  Key › " -NoNewline -ForegroundColor White
+
+  # Character-by-character read so we can detect Esc cleanly (Read-Host can't).
+  $sb = New-Object System.Text.StringBuilder
+  while ($true) {
+    $k = [Console]::ReadKey($true)
+    if ($k.Key -eq 'Escape') {
+      Write-Host ""
+      Write-Host "  cancelled — key unchanged." -ForegroundColor Yellow
+      Write-Host ""
+      return $false
+    }
+    if ($k.Key -eq 'Enter') { Write-Host ""; break }
+    if ($k.Key -eq 'Backspace') {
+      if ($sb.Length -gt 0) { [void]$sb.Remove($sb.Length - 1, 1) }
+      continue
+    }
+    if ($k.KeyChar -and [int]$k.KeyChar -ge 32) { [void]$sb.Append($k.KeyChar) }
+  }
+  $new = $sb.ToString().Trim()
+
   if ([string]::IsNullOrWhiteSpace($new)) {
-    if ($Rotate) { Write-Host "  cancelled (key unchanged)." -ForegroundColor DarkGray; return $false }
-    Write-Error "empty key, aborting."; exit 1
+    if ($Rotate) { Write-Host "  cancelled — key unchanged." -ForegroundColor Yellow; Write-Host ""; return $false }
+    Write-Host "  empty key, aborting." -ForegroundColor Yellow; exit 1
   }
   if (-not $new.StartsWith('sk-or-')) {
-    $confirm = Read-Host "Key doesn't start with 'sk-or-'. Save anyway? [y/N]"
+    Write-Host "  Key doesn't start with 'sk-or-'." -NoNewline -ForegroundColor Yellow
+    $confirm = Read-Host " Save anyway? [y/N]"
     if ($confirm -notmatch '^(y|yes)$') {
-      if ($Rotate) { Write-Host "  aborted (key unchanged)." -ForegroundColor DarkGray; return $false }
-      Write-Error "aborted."; exit 1
+      Write-Host "  aborted — key unchanged." -ForegroundColor Yellow; Write-Host ""
+      if ($Rotate) { return $false } else { exit 1 }
     }
   }
   Set-Content -Path $KeyFile -Value $new -NoNewline
@@ -69,9 +96,10 @@ function Read-AndSaveApiKey {
     Set-Acl -Path $KeyFile -AclObject $acl
   } catch {}
   $script:Key = $new
-  # Invalidate cached catalog so the next request uses the new key
   if (Test-Path $ModelsCache) { Remove-Item -Force $ModelsCache -ErrorAction SilentlyContinue }
-  Write-Host "openrouter-claude: saved key to $KeyFile" -ForegroundColor Cyan
+  Write-Host "  ✓ saved" -NoNewline -ForegroundColor Green
+  Write-Host " to $KeyFile"
+  Write-Host ""
   return $true
 }
 

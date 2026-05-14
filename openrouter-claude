@@ -26,40 +26,63 @@ MODELS_CACHE="$CONFIG_DIR/models.json"
 
 # --- key prompt/save: factored so the picker can re-invoke it on Ctrl+A ---
 # $1 = "missing" (first-time prompt) | "rotate" (replace existing)
+# returns 0 on save, 1 on cancel (rotate mode only)
 prompt_and_save_key() {
-  local mode="$1" new
-  if [ "$mode" = "rotate" ]; then
-    echo "" >&2
-    echo "openrouter-claude: replace your OpenRouter API key." >&2
-    echo "  current key file: $KEY_FILE" >&2
-  else
-    echo "openrouter-claude: no OpenRouter API key configured." >&2
-    echo "  Get one at: https://openrouter.ai/keys" >&2
+  local mode="$1" new first rest
+  local B=$'\033[1m' C=$'\033[36m' D=$'\033[2m' Y=$'\033[33m' G=$'\033[32m' R=$'\033[0m'
+  local title rule
+  if [ "$mode" = "rotate" ]; then title="Change OpenRouter API key"
+  else                            title="Set OpenRouter API key"
   fi
-  printf "Paste new key (input hidden, starts with sk-or-) or Enter to cancel: " >&2
+  rule="────────────────────────────────────────────────────"
+
+  printf "\n  %s%s %s%s\n" "$C" "🔑" "$B$title$R" >&2
+  printf "  %s%s%s\n" "$D" "$rule" "$R" >&2
+  if [ "$mode" = "rotate" ]; then
+    printf "  %sCurrent key:%s %s  %s(will be replaced)%s\n" "$D" "$R" "$KEY_FILE" "$D" "$R" >&2
+  fi
+  printf "  %sGet a key at:%s %shttps://openrouter.ai/keys%s\n" "$D" "$R" "$C" "$R" >&2
+  printf "  %sEsc%s cancels · %sEnter%s on empty also cancels\n\n" "$Y" "$R" "$Y" "$R" >&2
+  printf "  %sKey ›%s " "$B" "$R" >&2
+
+  # Silent read with ESC detection. First read 1 silent char; if it's ESC,
+  # drain any short follow-up sequence (arrow keys also start with ESC) and bail.
   stty -echo 2>/dev/null || true
-  IFS= read -r new || true
+  IFS= read -rsn1 first || true
+  if [ "$first" = $'\e' ]; then
+    IFS= read -rsn5 -t 0.05 rest 2>/dev/null || true
+    stty echo 2>/dev/null || true
+    printf "\n  %scancelled — key unchanged.%s\n\n" "$Y" "$R" >&2
+    return 1
+  fi
+  IFS= read -r rest || true
   stty echo 2>/dev/null || true
+  new="$(printf %s "${first}${rest}" | tr -d '[:space:]')"
   echo "" >&2
-  new="$(printf %s "$new" | tr -d '[:space:]')"
+
   if [ -z "$new" ]; then
-    [ "$mode" = "rotate" ] && { echo "  cancelled (key unchanged)." >&2; return 1; }
-    echo "openrouter-claude: empty key, aborting." >&2
+    if [ "$mode" = "rotate" ]; then
+      printf "  %scancelled — key unchanged.%s\n\n" "$Y" "$R" >&2
+      return 1
+    fi
+    printf "  %sempty key, aborting.%s\n" "$Y" "$R" >&2
     exit 1
   fi
   if ! printf %s "$new" | grep -q '^sk-or-'; then
-    printf "Key doesn't start with 'sk-or-'. Save anyway? [y/N]: " >&2
+    printf "  %sKey doesn't start with 'sk-or-'.%s Save anyway? [y/N] " "$Y" "$R" >&2
     read -r CONFIRM
-    case "$CONFIRM" in y|Y|yes|YES) ;; *) echo "  aborted (key unchanged)." >&2; [ "$mode" = "rotate" ] && return 1 || exit 1 ;; esac
+    case "$CONFIRM" in
+      y|Y|yes|YES) ;;
+      *) printf "  %saborted — key unchanged.%s\n\n" "$Y" "$R" >&2; [ "$mode" = "rotate" ] && return 1 || exit 1 ;;
+    esac
   fi
   mkdir -p "$CONFIG_DIR"
   umask 077
   printf %s "$new" > "$KEY_FILE"
   chmod 600 "$KEY_FILE"
   KEY="$new"
-  # Invalidate cached catalog so the next request uses the new key
   rm -f "$MODELS_CACHE" 2>/dev/null || true
-  echo "openrouter-claude: saved key to $KEY_FILE" >&2
+  printf "  %s✓ saved%s to %s\n\n" "$G" "$R" "$KEY_FILE" >&2
   return 0
 }
 
