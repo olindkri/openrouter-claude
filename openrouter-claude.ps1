@@ -1,4 +1,4 @@
-# openrouter-claude.ps1 — launch Claude Code routed through OpenRouter,
+﻿# openrouter-claude.ps1 — launch Claude Code routed through OpenRouter,
 # with a model picker driven by OpenRouter's live programming leaderboard.
 #
 # Usage:
@@ -307,7 +307,7 @@ function Invoke-FzfPicker([string[]]$rows) {
     '--gutter= ','--gutter-raw= ',
     '--layout=reverse-list','--pointer=▎ ','--marker= ',
     '--prompt=Select model for Claude Code: ',
-    '--header=Type to filter — ↑↓ to move — Enter to launch — Esc to cancel — Ctrl+A to change API key',
+    '--header=Type to filter - Up/Down to move - Enter to launch - Esc to cancel - Ctrl+A to change API key',
     '--no-info','--no-scrollbar','--expect=ctrl-a',
     '--color=header:dim,prompt:bold,pointer:cyan:bold,gutter:-1,bg+:-1,fg+:bright-white:bold,hl+:cyan:bold'
   )

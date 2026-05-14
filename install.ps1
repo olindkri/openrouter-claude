@@ -1,4 +1,4 @@
-# install.ps1 — install openrouter-claude on Windows so it runs from any terminal.
+﻿# install.ps1 — install openrouter-claude on Windows so it runs from any terminal.
 #
 # Copies openrouter-claude.ps1 and openrouter-claude.cmd into a per-user install
 # directory and adds that directory to the User PATH. Idempotent — re-run to update.
