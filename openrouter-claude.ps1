@@ -30,8 +30,8 @@ if (-not (Test-Path $ConfigDir)) { New-Item -ItemType Directory -Path $ConfigDir
 
 # --- ensure Tavily Search MCP is registered (idempotent, once per machine) ---
 # Anthropic's WebSearch only works on its first-party endpoint, not via OpenRouter.
-# Tavily (free tier 1000/mo, AI-agent-friendly burst limits) gives every model
-# reliable web search without Brave's 1 QPS cap.
+# Tavily (free tier 1000/mo, no per-second cap) gives every model reliable web search.
+# Get a key: https://app.tavily.com -> sign up -> Dashboard -> "API Keys" panel.
 $TavilyKeyFile = Join-Path $ConfigDir 'tavily-key'
 $SearchMarker  = Join-Path $ConfigDir '.search-registered'
 
@@ -69,8 +69,6 @@ if (-not (Test-Path $SearchMarker) -and (Get-Command claude -ErrorAction Silentl
       }
     }
     if ($key) {
-      & claude mcp remove -s user ddg-search    *> $null
-      & claude mcp remove -s user brave-search  *> $null
       & claude mcp remove -s user tavily-search *> $null
       try {
         & claude mcp add -s user tavily-search -e "TAVILY_API_KEY=$key" -- npx -y tavily-mcp@latest *> $null

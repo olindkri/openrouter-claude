@@ -125,9 +125,8 @@ On first launch you'll be prompted for a Tavily API key:
 2. Copy the API key from the dashboard
 3. Paste it when the launcher asks
 
-Free tier is **1000 queries/month** and — unlike Brave's free tier — there
-is no 1-query-per-second cap, so coding agents firing parallel searches
-don't get rate-limited within seconds.
+Free tier is **1000 queries/month** with no per-second rate cap, so a
+coding agent firing parallel searches won't get throttled within seconds.
 
 The launcher runs `claude mcp add -s user tavily-search -e TAVILY_API_KEY=...
 -- npx -y tavily-mcp@latest` under the hood. After that, every Claude Code

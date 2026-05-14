@@ -90,8 +90,8 @@ prompt_and_save_key() {
 # --- ensure Tavily Search MCP is registered (idempotent, once per machine) ---
 # Anthropic's built-in WebSearch tool only works on its first-party endpoint, so
 # it does nothing through OpenRouter. We register Tavily Search MCP at user scope
-# (free tier: 1000 queries/mo, AI-purpose-built so it tolerates agent bursts —
-# unlike Brave's 1 QPS cap). Sign up at https://app.tavily.com (no card needed).
+# (free tier: 1000 queries/mo, no per-second cap). Get a key:
+#   https://app.tavily.com  ->  sign up  ->  Dashboard  ->  "API Keys" panel
 TAVILY_KEY_FILE="$CONFIG_DIR/tavily-key"
 SEARCH_MARKER="$CONFIG_DIR/.search-registered"
 mkdir -p "$CONFIG_DIR"
@@ -136,9 +136,6 @@ ensure_tavily_search() {
     key="$(tr -d '[:space:]' < "$TAVILY_KEY_FILE")"
   fi
   [ -z "$key" ] && return 0
-  # Drop any old registrations (incl. DDG/Brave migrations) and re-add Tavily.
-  claude mcp remove -s user ddg-search    >/dev/null 2>&1 || true
-  claude mcp remove -s user brave-search  >/dev/null 2>&1 || true
   claude mcp remove -s user tavily-search >/dev/null 2>&1 || true
   if claude mcp add -s user tavily-search -e "TAVILY_API_KEY=$key" -- npx -y tavily-mcp@latest >/dev/null 2>&1; then
     : > "$SEARCH_MARKER"
