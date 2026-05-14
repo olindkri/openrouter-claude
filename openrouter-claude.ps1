@@ -255,7 +255,7 @@ function Invoke-FzfPicker([string[]]$rows) {
   $psi.RedirectStandardOutput = $true
   # ArgumentList isn't on PS5.1 so build a single Arguments string with quoting.
   $args = @(
-    '--read0','--ansi','--height=80%','--reverse','--gap',
+    '--read0','--ansi','--height=80%','--reverse','--gap=1','--gap-line= ',
     '--layout=reverse-list','--pointer=  ','--marker=✓',
     '--prompt=Select model for Claude Code: ',
     '--header=Type to filter — ↑↓ to move — Enter to launch — Esc to cancel',

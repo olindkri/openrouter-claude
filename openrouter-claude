@@ -250,7 +250,7 @@ fzf_pick() {
   local tsv="$1"
   # Use python (already a dep) — macOS BSD awk truncates output at first NUL byte,
   # which breaks fzf --read0 entry separation.
-  python3 - "$tsv" <<'PY' | fzf --read0 --ansi --height=80% --reverse --gap --layout=reverse-list --pointer="  " --marker="✓" --prompt="Select model for Claude Code: " --header="Type to filter — ↑↓ to move — Enter to launch — Esc to cancel" --no-info --no-scrollbar --color="header:dim,prompt:bold,pointer:green:bold,gutter:-1" | sed -E $'s/\033\\[[0-9;]*m//g' | head -n1 | awk -F' · ' '{print $1}'
+  python3 - "$tsv" <<'PY' | fzf --read0 --ansi --height=80% --reverse --gap=1 --gap-line=" " --layout=reverse-list --pointer="  " --marker="✓" --prompt="Select model for Claude Code: " --header="Type to filter — ↑↓ to move — Enter to launch — Esc to cancel" --no-info --no-scrollbar --color="header:dim,prompt:bold,pointer:green:bold,gutter:-1" | sed -E $'s/\033\\[[0-9;]*m//g' | head -n1 | awk -F' · ' '{print $1}'
 import sys
 C="\033[36m"; D="\033[2m"; R="\033[0m"
 out = sys.stdout.buffer
