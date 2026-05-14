@@ -47,41 +47,41 @@ function Read-AndSaveApiKey {
   }
   Write-Host "  Get a key at: " -NoNewline -ForegroundColor DarkGray
   Write-Host "https://openrouter.ai/keys" -ForegroundColor Cyan
-  Write-Host "  Esc" -NoNewline -ForegroundColor Yellow
-  Write-Host " cancels · " -NoNewline
+  Write-Host "  Press " -NoNewline -ForegroundColor DarkGray
   Write-Host "Enter" -NoNewline -ForegroundColor Yellow
-  Write-Host " on empty also cancels"
+  Write-Host " on empty to cancel." -ForegroundColor DarkGray
   Write-Host ""
-  Write-Host "  Key › " -NoNewline -ForegroundColor White
 
-  # Character-by-character read so we can detect Esc cleanly (Read-Host can't).
-  $sb = New-Object System.Text.StringBuilder
-  while ($true) {
-    $k = [Console]::ReadKey($true)
-    if ($k.Key -eq 'Escape') {
-      Write-Host ""
-      Write-Host "  cancelled — key unchanged." -ForegroundColor Yellow
-      Write-Host ""
-      return $false
-    }
-    if ($k.Key -eq 'Enter') { Write-Host ""; break }
-    if ($k.Key -eq 'Backspace') {
-      if ($sb.Length -gt 0) { [void]$sb.Remove($sb.Length - 1, 1) }
-      continue
-    }
-    if ($k.KeyChar -and [int]$k.KeyChar -ge 32) { [void]$sb.Append($k.KeyChar) }
-  }
-  $new = $sb.ToString().Trim()
+  # Visible Read-Host so paste works reliably and the user can verify the key
+  # before pressing Enter.
+  $new = (Read-Host "  Key").Trim()
 
   if ([string]::IsNullOrWhiteSpace($new)) {
-    if ($Rotate) { Write-Host "  cancelled — key unchanged." -ForegroundColor Yellow; Write-Host ""; return $false }
+    if ($Rotate) { Write-Host "  cancelled - key unchanged." -ForegroundColor Yellow; Write-Host ""; return $false }
     Write-Host "  empty key, aborting." -ForegroundColor Yellow; exit 1
   }
+
+  # Masked preview before save: first 12 chars + dots
+  $preview = $new.Substring(0, [Math]::Min(12, $new.Length)) + '........'
+  Write-Host ""
+
   if (-not $new.StartsWith('sk-or-')) {
-    Write-Host "  Key doesn't start with 'sk-or-'." -NoNewline -ForegroundColor Yellow
-    $confirm = Read-Host " Save anyway? [y/N]"
+    Write-Host "  Key doesn't start with 'sk-or-'." -ForegroundColor Yellow
+    Write-Host "  Confirm: " -NoNewline
+    Write-Host "Set API-KEY: " -NoNewline -ForegroundColor White
+    Write-Host $preview
+    $confirm = Read-Host "  Save anyway? [y/N]"
     if ($confirm -notmatch '^(y|yes)$') {
-      Write-Host "  aborted — key unchanged." -ForegroundColor Yellow; Write-Host ""
+      Write-Host "  aborted - key unchanged." -ForegroundColor Yellow; Write-Host ""
+      if ($Rotate) { return $false } else { exit 1 }
+    }
+  } else {
+    Write-Host "  Confirm: " -NoNewline
+    Write-Host "Set API-KEY: " -NoNewline -ForegroundColor White
+    Write-Host $preview
+    $confirm = Read-Host "  Save? [Y/n]"
+    if ($confirm -match '^(n|no)$') {
+      Write-Host "  cancelled - key unchanged." -ForegroundColor Yellow; Write-Host ""
       if ($Rotate) { return $false } else { exit 1 }
     }
   }

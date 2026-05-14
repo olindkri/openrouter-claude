@@ -45,20 +45,9 @@ prompt_and_save_key() {
   printf "  %sEsc%s cancels · %sEnter%s on empty also cancels\n\n" "$Y" "$R" "$Y" "$R" >&2
   printf "  %sKey ›%s " "$B" "$R" >&2
 
-  # Silent read with ESC detection. First read 1 silent char; if it's ESC,
-  # drain any short follow-up sequence (arrow keys also start with ESC) and bail.
-  stty -echo 2>/dev/null || true
-  IFS= read -rsn1 first || true
-  if [ "$first" = $'\e' ]; then
-    IFS= read -rsn5 -t 0.05 rest 2>/dev/null || true
-    stty echo 2>/dev/null || true
-    printf "\n  %scancelled — key unchanged.%s\n\n" "$Y" "$R" >&2
-    return 1
-  fi
-  IFS= read -r rest || true
-  stty echo 2>/dev/null || true
-  new="$(printf %s "${first}${rest}" | tr -d '[:space:]')"
-  echo "" >&2
+  # Visible input so paste works reliably and the user can verify before pressing Enter.
+  IFS= read -r new || true
+  new="$(printf %s "$new" | tr -d '[:space:]')"
 
   if [ -z "$new" ]; then
     if [ "$mode" = "rotate" ]; then
@@ -68,12 +57,24 @@ prompt_and_save_key() {
     printf "  %sempty key, aborting.%s\n" "$Y" "$R" >&2
     exit 1
   fi
+
+  # Build a masked preview: first 12 chars + dots
+  local preview="$(printf %s "$new" | cut -c1-12)........"
+
   if ! printf %s "$new" | grep -q '^sk-or-'; then
-    printf "  %sKey doesn't start with 'sk-or-'.%s Save anyway? [y/N] " "$Y" "$R" >&2
+    printf "  %sKey doesn't start with 'sk-or-'.%s Confirm: %sSet API-KEY:%s %s\n" "$Y" "$R" "$B" "$R" "$preview" >&2
+    printf "  Save anyway? [y/N] " >&2
     read -r CONFIRM
     case "$CONFIRM" in
       y|Y|yes|YES) ;;
       *) printf "  %saborted — key unchanged.%s\n\n" "$Y" "$R" >&2; [ "$mode" = "rotate" ] && return 1 || exit 1 ;;
+    esac
+  else
+    printf "  Confirm: %sSet API-KEY:%s %s\n" "$B" "$R" "$preview" >&2
+    printf "  Save? [Y/n] " >&2
+    read -r CONFIRM
+    case "$CONFIRM" in
+      n|N|no|NO) printf "  %scancelled — key unchanged.%s\n\n" "$Y" "$R" >&2; [ "$mode" = "rotate" ] && return 1 || exit 1 ;;
     esac
   fi
   mkdir -p "$CONFIG_DIR"
