@@ -259,7 +259,7 @@ function Invoke-FzfPicker([string[]]$rows) {
     '--layout=reverse-list','--pointer=  ','--marker=✓',
     '--prompt=Select model for Claude Code: ',
     '--header=Type to filter — ↑↓ to move — Enter to launch — Esc to cancel',
-    '--no-info','--color=header:dim,prompt:bold,pointer:green:bold'
+    '--no-info','--color=header:dim,prompt:bold,pointer:green:bold,gutter:-1'
   )
   $psi.Arguments = ($args | ForEach-Object {
     if ($_ -match '\s|"') { '"' + ($_ -replace '"','\"') + '"' } else { $_ }
