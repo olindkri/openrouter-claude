@@ -125,10 +125,6 @@ prompt_tavily_key() {
 ensure_tavily_search() {
   [ -f "$SEARCH_MARKER" ] && return 0
   command -v claude >/dev/null 2>&1 || return 0
-  if ! command -v npx >/dev/null 2>&1; then
-    echo "openrouter-claude: 'npx' (Node.js) not found — skipping Tavily Search MCP registration." >&2
-    return 0
-  fi
   local key="${TAVILY_API_KEY:-}"
   [ -z "$key" ] && [ -f "$TAVILY_KEY_FILE" ] && key="$(tr -d '[:space:]' < "$TAVILY_KEY_FILE")"
   if [ -z "$key" ]; then
@@ -136,10 +132,15 @@ ensure_tavily_search() {
     key="$(tr -d '[:space:]' < "$TAVILY_KEY_FILE")"
   fi
   [ -z "$key" ] && return 0
+  # Use Tavily's hosted remote MCP server over HTTP — much faster than spawning
+  # npx tavily-mcp on every Claude Code session start.
+  local url="https://mcp.tavily.com/mcp/?tavilyApiKey=$key"
+  # Drop any prior registration (incl. the old npx-based one) and re-add as remote.
+  claude mcp remove -s user tavily        >/dev/null 2>&1 || true
   claude mcp remove -s user tavily-search >/dev/null 2>&1 || true
-  if claude mcp add -s user tavily-search -e "TAVILY_API_KEY=$key" -- npx -y tavily-mcp@latest >/dev/null 2>&1; then
+  if claude mcp add -s user --transport http tavily "$url" >/dev/null 2>&1; then
     : > "$SEARCH_MARKER"
-    echo "openrouter-claude: registered Tavily Search MCP." >&2
+    echo "openrouter-claude: registered Tavily remote MCP." >&2
   fi
 }
 ensure_tavily_search

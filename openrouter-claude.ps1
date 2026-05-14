@@ -56,28 +56,28 @@ function Prompt-TavilyKey {
 }
 
 if (-not (Test-Path $SearchMarker) -and (Get-Command claude -ErrorAction SilentlyContinue)) {
-  if (-not (Get-Command npx -ErrorAction SilentlyContinue)) {
-    Write-Host "openrouter-claude: 'npx' (Node.js) not found - skipping Tavily Search MCP registration." -ForegroundColor DarkGray
-  } else {
-    $key = $env:TAVILY_API_KEY
-    if (-not $key -and (Test-Path $TavilyKeyFile)) {
+  $key = $env:TAVILY_API_KEY
+  if (-not $key -and (Test-Path $TavilyKeyFile)) {
+    $key = (Get-Content $TavilyKeyFile -Raw).Trim()
+  }
+  if (-not $key) {
+    if (Prompt-TavilyKey) {
       $key = (Get-Content $TavilyKeyFile -Raw).Trim()
     }
-    if (-not $key) {
-      if (Prompt-TavilyKey) {
-        $key = (Get-Content $TavilyKeyFile -Raw).Trim()
+  }
+  if ($key) {
+    # Use Tavily's hosted remote MCP server (HTTP transport) — much faster than
+    # spawning npx tavily-mcp on every Claude Code session start.
+    $url = "https://mcp.tavily.com/mcp/?tavilyApiKey=$key"
+    & claude mcp remove -s user tavily        *> $null
+    & claude mcp remove -s user tavily-search *> $null
+    try {
+      & claude mcp add -s user --transport http tavily "$url" *> $null
+      if ($LASTEXITCODE -eq 0) {
+        New-Item -ItemType File -Path $SearchMarker -Force | Out-Null
+        Write-Host "openrouter-claude: registered Tavily remote MCP." -ForegroundColor DarkGray
       }
-    }
-    if ($key) {
-      & claude mcp remove -s user tavily-search *> $null
-      try {
-        & claude mcp add -s user tavily-search -e "TAVILY_API_KEY=$key" -- npx -y tavily-mcp@latest *> $null
-        if ($LASTEXITCODE -eq 0) {
-          New-Item -ItemType File -Path $SearchMarker -Force | Out-Null
-          Write-Host "openrouter-claude: registered Tavily Search MCP." -ForegroundColor DarkGray
-        }
-      } catch { }
-    }
+    } catch { }
   }
 }
 

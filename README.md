@@ -128,9 +128,11 @@ On first launch you'll be prompted for a Tavily API key:
 Free tier is **1000 queries/month** with no per-second rate cap, so a
 coding agent firing parallel searches won't get throttled within seconds.
 
-The launcher runs `claude mcp add -s user tavily-search -e TAVILY_API_KEY=...
--- npx -y tavily-mcp@latest` under the hood. After that, every Claude Code
-session on every model gets web search via the `tavily-search` MCP tool.
+The launcher registers Tavily's **hosted remote MCP server** over HTTP:
+`claude mcp add -s user --transport http tavily "https://mcp.tavily.com/mcp/?tavilyApiKey=..."`.
+This is faster than spawning a local `npx tavily-mcp` process on every
+session start. After registration, every Claude Code session on every
+model gets web search via the `tavily` MCP tool.
 
 **Skip / set later:** press Enter at the prompt to skip. To set a key later,
 write it to `~/.openrouter-claude/tavily-key` (or
