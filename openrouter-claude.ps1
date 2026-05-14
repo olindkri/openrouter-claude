@@ -308,7 +308,10 @@ if (-not $Model) {
   else {
     $rows = (Get-RankedTsv $View) | Select-Object -First $Top
     if (Get-Command fzf -ErrorAction SilentlyContinue) {
-      Write-Host "OpenRouter programming leaderboard (view=$View, top=$Top) — ↑↓ + Enter, type to filter" -ForegroundColor DarkGray
+      Write-Host ""
+      Write-Host "  openrouter-claude" -ForegroundColor White
+      Write-Host "  Live programming rankings · view: $View · top $Top" -ForegroundColor DarkGray
+      Write-Host ""
       $Model = Invoke-FzfPicker $rows
       if (-not $Model) { Write-Host "cancelled." -ForegroundColor Yellow; exit 0 }
     } else {

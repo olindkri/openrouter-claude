@@ -308,7 +308,7 @@ if [ -z "$MODEL" ]; then
 
       if command -v fzf >/dev/null 2>&1; then
         echo "" >&2
-        echo "OpenRouter programming leaderboard (view=$RANK_VIEW, top=$TOP_N) — ↑↓ + Enter, type to filter" >&2
+        printf "\n  \033[1mopenrouter-claude\033[0m\n  \033[2mLive programming rankings · view: %s · top %s\033[0m\n\n" "$RANK_VIEW" "$TOP_N" >&2
         MODEL="$(fzf_pick "$TMPLIST")"
         [ -z "$MODEL" ] && { echo "openrouter-claude: cancelled." >&2; rm -f "$TMPLIST"; exit 0; }
       else
