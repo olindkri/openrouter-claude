@@ -112,33 +112,32 @@ rm -rf ~/.openrouter-claude
 & "$env:LOCALAPPDATA\Programs\openrouter-claude\install.ps1" -Uninstall
 ```
 
-## Web search (Brave, auto-registered)
+## Web search (Tavily, auto-registered)
 
 Claude Code's built-in `WebSearch` tool runs server-side on Anthropic's
 infrastructure, so it doesn't work on OpenRouter models. To work around
-this, the launcher **auto-registers Brave Search as an MCP server** on
-first run (once per machine, marker file in `~/.openrouter-claude/.brave-registered`).
+this, the launcher **auto-registers Tavily as an MCP server** on first
+run (once per machine, marker file `~/.openrouter-claude/.search-registered`).
 
-On first launch you'll be prompted for a Brave Search API key. The free
-tier covers ~2000 queries/month, which is plenty for normal coding use:
+On first launch you'll be prompted for a Tavily API key:
 
-1. Go to https://brave.com/search/api/, sign up (30-sec, no card on free tier)
-2. Create a "Data for AI / Free" subscription
-3. Copy the API key and paste it when the launcher asks
+1. Sign up at https://app.tavily.com (30-sec, no card on free tier)
+2. Copy the API key from the dashboard
+3. Paste it when the launcher asks
 
-The launcher then runs `claude mcp add -s user brave-search -e BRAVE_API_KEY=...
--- npx -y @modelcontextprotocol/server-brave-search`. After that, every
-Claude Code session on every model gets reliable web search.
+Free tier is **1000 queries/month** and — unlike Brave's free tier — there
+is no 1-query-per-second cap, so coding agents firing parallel searches
+don't get rate-limited within seconds.
+
+The launcher runs `claude mcp add -s user tavily-search -e TAVILY_API_KEY=...
+-- npx -y tavily-mcp@latest` under the hood. After that, every Claude Code
+session on every model gets web search via the `tavily-search` MCP tool.
 
 **Skip / set later:** press Enter at the prompt to skip. To set a key later,
-write it to `~/.openrouter-claude/brave-key` (or `%USERPROFILE%\.openrouter-claude\brave-key`
-on Windows) and re-launch. To rotate the key, delete that file plus the
-`.brave-registered` marker next to it.
-
-**Why Brave and not DuckDuckGo:** an earlier version of this launcher used
-DDG (no key needed). DuckDuckGo's bot detector blocks scraping aggressively,
-so in practice every other query returned "no results." Brave's free tier is
-fast, reliable, and the 30-second signup is worth it.
+write it to `~/.openrouter-claude/tavily-key` (or
+`%USERPROFILE%\.openrouter-claude\tavily-key` on Windows) and re-launch.
+To rotate the key, delete that file plus the `.search-registered` marker
+next to it.
 
 ## Auto-compaction on non-Anthropic models
 

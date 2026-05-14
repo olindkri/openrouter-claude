@@ -116,4 +116,4 @@ Write-Host "    openrouter-claude" -ForegroundColor White
 Write-Host ""
 Write-Host "On first run it will prompt for two keys:" -ForegroundColor DarkGray
 Write-Host "  - OpenRouter API key (required) - https://openrouter.ai/keys" -ForegroundColor DarkGray
-Write-Host "  - Brave Search API key (optional, for web search) - https://brave.com/search/api/" -ForegroundColor DarkGray
+Write-Host "  - Tavily API key (optional, for web search, free 1000/mo) - https://app.tavily.com" -ForegroundColor DarkGray

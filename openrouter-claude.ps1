@@ -28,51 +28,55 @@ $ModelsCache = Join-Path $ConfigDir 'models.json'
 $RankCache   = Join-Path $ConfigDir "rankings.v2.$View.tsv"
 if (-not (Test-Path $ConfigDir)) { New-Item -ItemType Directory -Path $ConfigDir | Out-Null }
 
-# --- ensure Brave Search MCP is registered (idempotent, once per machine) ---
+# --- ensure Tavily Search MCP is registered (idempotent, once per machine) ---
 # Anthropic's WebSearch only works on its first-party endpoint, not via OpenRouter.
-# Brave Search MCP (free tier ~2000/mo) gives every model reliable web search.
-$BraveKeyFile = Join-Path $ConfigDir 'brave-key'
-$BraveMarker  = Join-Path $ConfigDir '.brave-registered'
+# Tavily (free tier 1000/mo, AI-agent-friendly burst limits) gives every model
+# reliable web search without Brave's 1 QPS cap.
+$TavilyKeyFile = Join-Path $ConfigDir 'tavily-key'
+$SearchMarker  = Join-Path $ConfigDir '.search-registered'
 
-function Prompt-BraveKey {
+function Prompt-TavilyKey {
   if (-not [Environment]::UserInteractive) { return $false }
   Write-Host ""
-  Write-Host "  Set up web search (Brave)" -ForegroundColor White
+  Write-Host "  Set up web search (Tavily)" -ForegroundColor White
   Write-Host "  ----------------------------------------------------" -ForegroundColor DarkGray
-  Write-Host "  Free tier ~2000 queries/mo. Get a key: https://brave.com/search/api/" -ForegroundColor DarkGray
-  Write-Host "  Press Enter to skip (you can set it later by writing it to $BraveKeyFile)." -ForegroundColor DarkGray
+  Write-Host "  Free tier 1000 queries/mo, AI-agent-friendly (no per-second cap)." -ForegroundColor DarkGray
+  Write-Host "  Sign up: https://app.tavily.com   (no card required)" -ForegroundColor DarkGray
+  Write-Host "  Press Enter to skip (you can set it later by writing it to $TavilyKeyFile)." -ForegroundColor DarkGray
   Write-Host ""
   $k = (Read-Host "  Key").Trim()
   if (-not $k) {
     Write-Host "  (skipped - search registration deferred)" -ForegroundColor DarkGray
     return $false
   }
-  Set-Content -Path $BraveKeyFile -Value $k -NoNewline -Encoding ascii
-  Write-Host "  saved to $BraveKeyFile" -ForegroundColor Green
+  Set-Content -Path $TavilyKeyFile -Value $k -NoNewline -Encoding ascii
+  Write-Host "  saved to $TavilyKeyFile" -ForegroundColor Green
   Write-Host ""
   return $true
 }
 
-if (-not (Test-Path $BraveMarker) -and (Get-Command claude -ErrorAction SilentlyContinue)) {
+if (-not (Test-Path $SearchMarker) -and (Get-Command claude -ErrorAction SilentlyContinue)) {
   if (-not (Get-Command npx -ErrorAction SilentlyContinue)) {
-    Write-Host "openrouter-claude: 'npx' (Node.js) not found - skipping Brave Search MCP registration." -ForegroundColor DarkGray
+    Write-Host "openrouter-claude: 'npx' (Node.js) not found - skipping Tavily Search MCP registration." -ForegroundColor DarkGray
   } else {
-    $key = $env:BRAVE_API_KEY
-    if (-not $key -and (Test-Path $BraveKeyFile)) {
-      $key = (Get-Content $BraveKeyFile -Raw).Trim()
+    $key = $env:TAVILY_API_KEY
+    if (-not $key -and (Test-Path $TavilyKeyFile)) {
+      $key = (Get-Content $TavilyKeyFile -Raw).Trim()
     }
     if (-not $key) {
-      if (Prompt-BraveKey) {
-        $key = (Get-Content $BraveKeyFile -Raw).Trim()
+      if (Prompt-TavilyKey) {
+        $key = (Get-Content $TavilyKeyFile -Raw).Trim()
       }
     }
     if ($key) {
-      & claude mcp remove -s user brave-search *> $null
+      & claude mcp remove -s user ddg-search    *> $null
+      & claude mcp remove -s user brave-search  *> $null
+      & claude mcp remove -s user tavily-search *> $null
       try {
-        & claude mcp add -s user brave-search -e "BRAVE_API_KEY=$key" -- npx -y @modelcontextprotocol/server-brave-search *> $null
+        & claude mcp add -s user tavily-search -e "TAVILY_API_KEY=$key" -- npx -y tavily-mcp@latest *> $null
         if ($LASTEXITCODE -eq 0) {
-          New-Item -ItemType File -Path $BraveMarker -Force | Out-Null
-          Write-Host "openrouter-claude: registered Brave Search MCP." -ForegroundColor DarkGray
+          New-Item -ItemType File -Path $SearchMarker -Force | Out-Null
+          Write-Host "openrouter-claude: registered Tavily Search MCP." -ForegroundColor DarkGray
         }
       } catch { }
     }

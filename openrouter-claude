@@ -87,25 +87,26 @@ prompt_and_save_key() {
   return 0
 }
 
-# --- ensure Brave Search MCP is registered (idempotent, once per machine) ---
+# --- ensure Tavily Search MCP is registered (idempotent, once per machine) ---
 # Anthropic's built-in WebSearch tool only works on its first-party endpoint, so
-# it does nothing through OpenRouter. We register Brave Search MCP at user scope
-# (free tier: ~2000 queries/mo, sign up at https://brave.com/search/api/) so every
-# Claude Code session — on any model, in any project — gets reliable web search.
-BRAVE_KEY_FILE="$CONFIG_DIR/brave-key"
-BRAVE_MARKER="$CONFIG_DIR/.brave-registered"
+# it does nothing through OpenRouter. We register Tavily Search MCP at user scope
+# (free tier: 1000 queries/mo, AI-purpose-built so it tolerates agent bursts —
+# unlike Brave's 1 QPS cap). Sign up at https://app.tavily.com (no card needed).
+TAVILY_KEY_FILE="$CONFIG_DIR/tavily-key"
+SEARCH_MARKER="$CONFIG_DIR/.search-registered"
 mkdir -p "$CONFIG_DIR"
 
-prompt_brave_key() {
+prompt_tavily_key() {
   # interactive only — silently skip in pipes / CI
   [ -t 0 ] && [ -t 1 ] || return 1
   local B="$(printf '\033[1m')" D="$(printf '\033[2m')" G="$(printf '\033[32m')" R="$(printf '\033[0m')"
   {
     echo ""
-    printf "  %s🔎 Set up web search (Brave)%s\n" "$B" "$R"
+    printf "  %s🔎 Set up web search (Tavily)%s\n" "$B" "$R"
     printf "  %s────────────────────────────────────────────────────%s\n" "$D" "$R"
-    printf "  Free tier ~2000 queries/mo. Get a key: %shttps://brave.com/search/api/%s\n" "$D" "$R"
-    printf "  Press Enter to skip (you can set it later by writing it to %s).\n\n" "$BRAVE_KEY_FILE"
+    printf "  Free tier 1000 queries/mo, AI-agent-friendly (no per-second cap).\n"
+    printf "  Sign up: %shttps://app.tavily.com%s   (no card required)\n" "$D" "$R"
+    printf "  Press Enter to skip (you can set it later by writing it to %s).\n\n" "$TAVILY_KEY_FILE"
     printf "  %sKey ›%s " "$B" "$R"
   } >&2
   local k=""
@@ -116,33 +117,35 @@ prompt_brave_key() {
     return 1
   fi
   umask 077
-  printf %s "$k" > "$BRAVE_KEY_FILE"
-  printf "  %s✓ saved%s to %s\n\n" "$G" "$R" "$BRAVE_KEY_FILE" >&2
+  printf %s "$k" > "$TAVILY_KEY_FILE"
+  printf "  %s✓ saved%s to %s\n\n" "$G" "$R" "$TAVILY_KEY_FILE" >&2
   return 0
 }
 
-ensure_brave_search() {
-  [ -f "$BRAVE_MARKER" ] && return 0
+ensure_tavily_search() {
+  [ -f "$SEARCH_MARKER" ] && return 0
   command -v claude >/dev/null 2>&1 || return 0
   if ! command -v npx >/dev/null 2>&1; then
-    echo "openrouter-claude: 'npx' (Node.js) not found — skipping Brave Search MCP registration." >&2
+    echo "openrouter-claude: 'npx' (Node.js) not found — skipping Tavily Search MCP registration." >&2
     return 0
   fi
-  local key="${BRAVE_API_KEY:-}"
-  [ -z "$key" ] && [ -f "$BRAVE_KEY_FILE" ] && key="$(tr -d '[:space:]' < "$BRAVE_KEY_FILE")"
+  local key="${TAVILY_API_KEY:-}"
+  [ -z "$key" ] && [ -f "$TAVILY_KEY_FILE" ] && key="$(tr -d '[:space:]' < "$TAVILY_KEY_FILE")"
   if [ -z "$key" ]; then
-    prompt_brave_key || return 0
-    key="$(tr -d '[:space:]' < "$BRAVE_KEY_FILE")"
+    prompt_tavily_key || return 0
+    key="$(tr -d '[:space:]' < "$TAVILY_KEY_FILE")"
   fi
   [ -z "$key" ] && return 0
-  # Re-add (idempotent) so a rotated key takes effect.
-  claude mcp remove -s user brave-search >/dev/null 2>&1 || true
-  if claude mcp add -s user brave-search -e "BRAVE_API_KEY=$key" -- npx -y @modelcontextprotocol/server-brave-search >/dev/null 2>&1; then
-    : > "$BRAVE_MARKER"
-    echo "openrouter-claude: registered Brave Search MCP." >&2
+  # Drop any old registrations (incl. DDG/Brave migrations) and re-add Tavily.
+  claude mcp remove -s user ddg-search    >/dev/null 2>&1 || true
+  claude mcp remove -s user brave-search  >/dev/null 2>&1 || true
+  claude mcp remove -s user tavily-search >/dev/null 2>&1 || true
+  if claude mcp add -s user tavily-search -e "TAVILY_API_KEY=$key" -- npx -y tavily-mcp@latest >/dev/null 2>&1; then
+    : > "$SEARCH_MARKER"
+    echo "openrouter-claude: registered Tavily Search MCP." >&2
   fi
 }
-ensure_brave_search
+ensure_tavily_search
 
 # --- key ---
 KEY="${OPENROUTER_API_KEY:-}"
