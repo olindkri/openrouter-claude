@@ -108,11 +108,30 @@ if (-not $NoFzfPrompt -and -not (Get-Command fzf -ErrorAction SilentlyContinue))
   }
 }
 
-# 5) verify Python (PS1 launcher uses it for HTML parsing on first call only)
-if (-not (Get-Command python -ErrorAction SilentlyContinue) -and -not (Get-Command python3 -ErrorAction SilentlyContinue)) {
+# 5) offer to install uv (needed by the auto-registered DuckDuckGo MCP search server)
+if (-not (Get-Command uv -ErrorAction SilentlyContinue) `
+    -and -not (Get-Command uvx -ErrorAction SilentlyContinue) `
+    -and -not (Get-Command pipx -ErrorAction SilentlyContinue)) {
   Write-Host ""
-  Write-Host "Note: Python isn't required (the PowerShell launcher parses rankings natively)," -ForegroundColor DarkGray
-  Write-Host "but installing it unlocks faster cold starts. winget install Python.Python.3.12" -ForegroundColor DarkGray
+  Write-Host "'uv' enables web search on any model via DuckDuckGo MCP (no API key)." -ForegroundColor Cyan
+  $hasWingetU = [bool](Get-Command winget -ErrorAction SilentlyContinue)
+  $hasScoopU  = [bool](Get-Command scoop  -ErrorAction SilentlyContinue)
+  if ($hasWingetU -or $hasScoopU) {
+    $ans = Read-Host "Install uv now? [Y/n]"
+    if ($ans -notmatch '^(n|no)$') {
+      try {
+        if ($hasWingetU) { winget install --id=astral-sh.uv -e --silent }
+        elseif ($hasScoopU) { scoop install uv }
+        Write-Host "  uv installed." -ForegroundColor Green
+      } catch {
+        Write-Host "  uv install failed; web search auto-registration will be skipped on first launch." -ForegroundColor Yellow
+      }
+    }
+  } else {
+    Write-Host "  Install manually:" -ForegroundColor DarkGray
+    Write-Host "    winget install --id=astral-sh.uv -e" -ForegroundColor DarkGray
+    Write-Host "    scoop install uv" -ForegroundColor DarkGray
+  }
 }
 
 Write-Host ""

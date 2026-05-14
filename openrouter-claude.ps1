@@ -18,9 +18,6 @@ param(
   [string]$View = $(if ($env:OPENROUTER_RANK_VIEW) { $env:OPENROUTER_RANK_VIEW } else { 'week' }),
   [int]$Top = $(if ($env:OPENROUTER_TOP_N) { [int]$env:OPENROUTER_TOP_N } else { 25 }),
   [switch]$Refresh,
-  [switch]$Router,
-  [int]$RouterPort = $(if ($env:CCR_PORT) { [int]$env:CCR_PORT } else { 3456 }),
-  [switch]$SetupSearch,
   [Parameter(ValueFromRemainingArguments = $true)] [string[]]$Rest
 )
 
@@ -31,65 +28,37 @@ $ModelsCache = Join-Path $ConfigDir 'models.json'
 $RankCache   = Join-Path $ConfigDir "rankings.v2.$View.tsv"
 if (-not (Test-Path $ConfigDir)) { New-Item -ItemType Directory -Path $ConfigDir | Out-Null }
 
-# --- one-shot: register DuckDuckGo MCP search server, then exit ---
-if ($SetupSearch) {
-  if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
-    Write-Error "openrouter-claude: 'claude' CLI not found. npm i -g @anthropic-ai/claude-code"
-    exit 1
-  }
+# --- ensure DuckDuckGo MCP search is registered (idempotent, once per machine) ---
+# Anthropic's WebSearch only works on its first-party endpoint, not via OpenRouter.
+# DDG MCP gives every model search capability with no API key (scrapes DDG HTML).
+$DdgMarker = Join-Path $ConfigDir '.ddg-registered'
+if (-not (Test-Path $DdgMarker) -and (Get-Command claude -ErrorAction SilentlyContinue)) {
   $runner = $null
   if (Get-Command uvx -ErrorAction SilentlyContinue) {
     $runner = @('uvx','duckduckgo-mcp-server')
   } elseif (Get-Command pipx -ErrorAction SilentlyContinue) {
     $runner = @('pipx','run','duckduckgo-mcp-server')
+  }
+  if ($runner) {
+    $existing = & claude mcp list 2>$null | Out-String
+    if ($existing -match '(?m)^\s*ddg-search\b') {
+      New-Item -ItemType File -Path $DdgMarker -Force | Out-Null
+    } else {
+      try {
+        & claude mcp add -s user ddg-search -- @runner *> $null
+        if ($LASTEXITCODE -eq 0) {
+          New-Item -ItemType File -Path $DdgMarker -Force | Out-Null
+          Write-Host "openrouter-claude: registered DuckDuckGo MCP search (no API key needed)." -ForegroundColor DarkGray
+        }
+      } catch { }
+    }
   } else {
-    Write-Host "openrouter-claude: need 'uvx' (recommended) or 'pipx' to run the DDG MCP server." -ForegroundColor Yellow
-    Write-Host "  install uv: winget install --id=astral-sh.uv -e" -ForegroundColor DarkGray
-    Write-Host "  or:         scoop install uv" -ForegroundColor DarkGray
-    exit 1
+    Write-Host ""
+    Write-Host "Tip: install 'uv' to enable web search on any model via DuckDuckGo MCP:" -ForegroundColor DarkGray
+    Write-Host "       winget install --id=astral-sh.uv -e   # or: scoop install uv" -ForegroundColor DarkGray
+    Write-Host "     Then re-run openrouter-claude and search will be auto-registered." -ForegroundColor DarkGray
+    Write-Host ""
   }
-  & claude mcp remove -s user ddg-search *> $null
-  & claude mcp add -s user ddg-search -- @runner
-  Write-Host ""
-  Write-Host "Registered DuckDuckGo MCP search as 'ddg-search' (user scope)." -ForegroundColor Green
-  Write-Host "Open a new Claude Code session and ask it to search - no API key needed." -ForegroundColor DarkGray
-  exit 0
-}
-
-# --- router mode: route through claude-code-router instead of OpenRouter directly ---
-if ($Router) {
-  $ok = $false
-  try {
-    Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri "http://127.0.0.1:$RouterPort" | Out-Null
-    $ok = $true
-  } catch {
-    try {
-      Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri "http://127.0.0.1:$RouterPort/health" | Out-Null
-      $ok = $true
-    } catch { }
-  }
-  if (-not $ok) {
-    Write-Host "openrouter-claude: claude-code-router not reachable at 127.0.0.1:$RouterPort" -ForegroundColor Red
-    Write-Host "  start it with: ccr start    (foreground: ccr code)" -ForegroundColor DarkGray
-    Write-Host "  install:       npm i -g @musistudio/claude-code-router" -ForegroundColor DarkGray
-    exit 1
-  }
-  if (-not (Get-Command claude -ErrorAction SilentlyContinue)) {
-    Write-Error "openrouter-claude: 'claude' CLI not found."
-    exit 1
-  }
-  $env:ANTHROPIC_BASE_URL   = "http://127.0.0.1:$RouterPort"
-  $env:ANTHROPIC_AUTH_TOKEN = 'dummy'
-  $env:ANTHROPIC_API_KEY    = ''
-  Remove-Item Env:ANTHROPIC_MODEL -ErrorAction SilentlyContinue
-  Remove-Item Env:ANTHROPIC_SMALL_FAST_MODEL -ErrorAction SilentlyContinue
-  Write-Host "openrouter-claude -> via claude-code-router at 127.0.0.1:$RouterPort" -ForegroundColor Cyan
-  if ($env:OPENROUTER_CLAUDE_SAFE -eq '1') {
-    & claude @Rest
-  } else {
-    & claude --dangerously-skip-permissions @Rest
-  }
-  exit $LASTEXITCODE
 }
 
 # --- key prompt/save: factored so the picker can re-invoke on Ctrl+A ---
