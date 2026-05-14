@@ -473,19 +473,34 @@ export ANTHROPIC_SMALL_FAST_MODEL="${ANTHROPIC_SMALL_FAST_MODEL:-$MODEL}"
 
 # Force client-side /compact triggers when routed to non-Anthropic models.
 # OpenRouter doesn't support Anthropic's context-management-2025-06-27 header,
-# so Claude Code never auto-compacts on its own. We override the detected window
-# (capped to ~180K — most OpenRouter providers serve less than they advertise)
-# and trigger compaction at 75% instead of ~92%. Users can override either.
-MODEL_CTX=180000
+# so Claude Code never auto-compacts on its own. We export the catalog's actual
+# context_length for the chosen model (1M for DeepSeek V4 Pro, 256K for Kimi K2.6,
+# etc.) and trigger compaction at 75% instead of ~92%. Users can override either
+# via CLAUDE_CODE_MAX_CONTEXT_TOKENS / CLAUDE_AUTOCOMPACT_PCT_OVERRIDE.
+MODEL_CTX=200000
+# Look up in the rankings TSV first (already loaded for the picker).
 if [ -f "$CONFIG_DIR/rankings.v2.$RANK_VIEW.tsv" ]; then
   found_ctx="$(awk -F'\t' -v m="$MODEL" '$1==m { print $2; exit }' "$CONFIG_DIR/rankings.v2.$RANK_VIEW.tsv" 2>/dev/null || true)"
-  if [ -n "${found_ctx:-}" ] && [ "$found_ctx" -gt 0 ] 2>/dev/null; then
-    # cap to 180K — providers commonly serve less than the catalog claims
-    if [ "$found_ctx" -gt 180000 ]; then MODEL_CTX=180000; else MODEL_CTX="$found_ctx"; fi
+fi
+# Fall back to the full /api/v1/models cache (catches models picked via -m that
+# aren't in the top-N programming rankings).
+if [ -z "${found_ctx:-}" ] || ! [ "$found_ctx" -gt 0 ] 2>/dev/null; then
+  if [ -f "$MODELS_CACHE" ] && command -v python3 >/dev/null 2>&1; then
+    found_ctx="$(python3 -c "
+import json, sys
+m = '''$MODEL'''
+try:
+  for x in json.load(open('$MODELS_CACHE'))['data']:
+    if x.get('id') == m:
+      print(x.get('context_length') or 0); break
+except Exception: pass
+" 2>/dev/null || true)"
   fi
 fi
+[ -n "${found_ctx:-}" ] && [ "$found_ctx" -gt 0 ] 2>/dev/null && MODEL_CTX="$found_ctx"
 export CLAUDE_CODE_MAX_CONTEXT_TOKENS="${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-$MODEL_CTX}"
 export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-75}"
+echo "openrouter-claude: context window = ${MODEL_CTX} tokens (compact at ${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE}%)" >&2
 
 # Pass --dangerously-skip-permissions by default. Opt out with OPENROUTER_CLAUDE_SAFE=1.
 SKIP_PERM_FLAG="--dangerously-skip-permissions"

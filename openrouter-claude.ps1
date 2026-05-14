@@ -474,21 +474,28 @@ if (-not $env:ANTHROPIC_SMALL_FAST_MODEL) { $env:ANTHROPIC_SMALL_FAST_MODEL = $M
 
 # Force client-side /compact triggers when routed to non-Anthropic models.
 # OpenRouter doesn't support Anthropic's context-management-2025-06-27 header,
-# so Claude Code never auto-compacts on its own. Override the detected window
-# (capped at ~180K — providers commonly serve less than the catalog claims)
-# and trigger compaction at 75% instead of ~92%.
-$ModelCtx = 180000
+# so Claude Code never auto-compacts on its own. We export the catalog's actual
+# context_length for the chosen model (1M for DeepSeek V4 Pro, 256K for Kimi K2.6,
+# etc.) and trigger compaction at 75% instead of ~92%.
+$ModelCtx = 200000
+$foundCtx = 0
 if (Test-Path $RankCache) {
   $row = (Get-Content $RankCache | Where-Object { $_ -match "^$([regex]::Escape($Model))`t" } | Select-Object -First 1)
-  if ($row) {
-    $foundCtx = [int]($row -split "`t")[1]
-    if ($foundCtx -gt 0) {
-      $ModelCtx = [Math]::Min($foundCtx, 180000)
-    }
-  }
+  if ($row) { $foundCtx = [int]($row -split "`t")[1] }
 }
-if (-not $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS) { $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = "$ModelCtx" }
+# Fall back to the full /api/v1/models cache for models picked via -m that
+# aren't in the top-N programming rankings.
+if ($foundCtx -le 0 -and (Test-Path $ModelsCache)) {
+  try {
+    $catalog = (Get-Content $ModelsCache -Raw | ConvertFrom-Json).data
+    $entry = $catalog | Where-Object { $_.id -eq $Model } | Select-Object -First 1
+    if ($entry -and $entry.context_length) { $foundCtx = [int]$entry.context_length }
+  } catch { }
+}
+if ($foundCtx -gt 0) { $ModelCtx = $foundCtx }
+if (-not $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS)  { $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = "$ModelCtx" }
 if (-not $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) { $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '75' }
+Write-Host "openrouter-claude: context window = $ModelCtx tokens (compact at $($env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)%)" -ForegroundColor DarkGray
 
 # Disable Anthropic's server-side WebSearch tool — it's a no-op on OpenRouter
 # (Anthropic-only beta capability), and if it's visible the model picks it over
