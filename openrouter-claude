@@ -401,4 +401,7 @@ export ANTHROPIC_API_KEY=""
 export ANTHROPIC_MODEL="$MODEL"
 export ANTHROPIC_SMALL_FAST_MODEL="${ANTHROPIC_SMALL_FAST_MODEL:-$MODEL}"
 
-exec claude ${PASSTHRU[@]+"${PASSTHRU[@]}"}
+# Pass --dangerously-skip-permissions by default. Opt out with OPENROUTER_CLAUDE_SAFE=1.
+SKIP_PERM_FLAG="--dangerously-skip-permissions"
+if [ "${OPENROUTER_CLAUDE_SAFE:-0}" = "1" ]; then SKIP_PERM_FLAG=""; fi
+exec claude ${SKIP_PERM_FLAG:+"$SKIP_PERM_FLAG"} ${PASSTHRU[@]+"${PASSTHRU[@]}"}

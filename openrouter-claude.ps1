@@ -408,5 +408,10 @@ $env:ANTHROPIC_API_KEY    = ''
 $env:ANTHROPIC_MODEL      = $Model
 if (-not $env:ANTHROPIC_SMALL_FAST_MODEL) { $env:ANTHROPIC_SMALL_FAST_MODEL = $Model }
 
-& claude @Rest
+# Pass --dangerously-skip-permissions by default. Opt out with $env:OPENROUTER_CLAUDE_SAFE = '1'.
+if ($env:OPENROUTER_CLAUDE_SAFE -eq '1') {
+  & claude @Rest
+} else {
+  & claude --dangerously-skip-permissions @Rest
+}
 exit $LASTEXITCODE
