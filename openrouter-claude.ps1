@@ -35,11 +35,11 @@ function Read-AndSaveApiKey {
     Write-Error "openrouter-claude: no OpenRouter key. Set `$env:OPENROUTER_API_KEY or write $KeyFile"
     exit 1
   }
-  $title = if ($Rotate) { 'Change OpenRouter API key' } else { 'Set OpenRouter API key' }
-  $rule  = '────────────────────────────────────────────────────'
+  $title   = if ($Rotate) { 'Change OpenRouter API key' } else { 'Set OpenRouter API key' }
+  $divider = '────────────────────────────────────────────────────'
   Write-Host ""
   Write-Host "  🔑 $title" -ForegroundColor Cyan
-  Write-Host "  $rule" -ForegroundColor DarkGray
+  Write-Host "  $divider" -ForegroundColor DarkGray
   if ($Rotate) {
     Write-Host "  Current key: " -NoNewline -ForegroundColor DarkGray
     Write-Host "$KeyFile  " -NoNewline
