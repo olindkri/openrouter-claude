@@ -472,19 +472,17 @@ $env:ANTHROPIC_API_KEY    = ''
 $env:ANTHROPIC_MODEL      = $Model
 if (-not $env:ANTHROPIC_SMALL_FAST_MODEL) { $env:ANTHROPIC_SMALL_FAST_MODEL = $Model }
 
-# Force client-side /compact triggers when routed to non-Anthropic models.
-# OpenRouter doesn't support Anthropic's context-management-2025-06-27 header,
-# so Claude Code never auto-compacts on its own. We export the catalog's actual
-# context_length for the chosen model (1M for DeepSeek V4 Pro, 256K for Kimi K2.6,
-# etc.) and trigger compaction at 75% instead of ~92%.
+# Claude Code limitation: when pointed at a non-Anthropic endpoint, it defaults
+# the context window to a hardcoded 200K regardless of the actual model.
+# CLAUDE_CODE_MAX_CONTEXT_TOKENS only applies when DISABLE_COMPACT=1 is also set.
+# Default: disable auto-compaction, expose real window from catalog. Opt back to
+# auto-compact at 75% of 200K with $env:OPENROUTER_CLAUDE_AUTOCOMPACT = '1'.
 $ModelCtx = 200000
 $foundCtx = 0
 if (Test-Path $RankCache) {
   $row = (Get-Content $RankCache | Where-Object { $_ -match "^$([regex]::Escape($Model))`t" } | Select-Object -First 1)
   if ($row) { $foundCtx = [int]($row -split "`t")[1] }
 }
-# Fall back to the full /api/v1/models cache for models picked via -m that
-# aren't in the top-N programming rankings.
 if ($foundCtx -le 0 -and (Test-Path $ModelsCache)) {
   try {
     $catalog = (Get-Content $ModelsCache -Raw | ConvertFrom-Json).data
@@ -493,9 +491,15 @@ if ($foundCtx -le 0 -and (Test-Path $ModelsCache)) {
   } catch { }
 }
 if ($foundCtx -gt 0) { $ModelCtx = $foundCtx }
-if (-not $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS)  { $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = "$ModelCtx" }
-if (-not $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) { $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '75' }
-Write-Host "openrouter-claude: context window = $ModelCtx tokens (compact at $($env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)%)" -ForegroundColor DarkGray
+
+if ($env:OPENROUTER_CLAUDE_AUTOCOMPACT -eq '1') {
+  if (-not $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) { $env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = '75' }
+  Write-Host "openrouter-claude: auto-compact ON (window pinned at CC's default ~200K, compact at $($env:CLAUDE_AUTOCOMPACT_PCT_OVERRIDE)%)" -ForegroundColor DarkGray
+} else {
+  if (-not $env:DISABLE_COMPACT) { $env:DISABLE_COMPACT = '1' }
+  if (-not $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS) { $env:CLAUDE_CODE_MAX_CONTEXT_TOKENS = "$ModelCtx" }
+  Write-Host "openrouter-claude: context window = $ModelCtx tokens. auto-compact OFF (run /compact manually; set OPENROUTER_CLAUDE_AUTOCOMPACT=1 to re-enable)" -ForegroundColor DarkGray
+}
 
 # Disable Anthropic's server-side WebSearch tool — it's a no-op on OpenRouter
 # (Anthropic-only beta capability), and if it's visible the model picks it over

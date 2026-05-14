@@ -471,12 +471,16 @@ export ANTHROPIC_API_KEY=""
 export ANTHROPIC_MODEL="$MODEL"
 export ANTHROPIC_SMALL_FAST_MODEL="${ANTHROPIC_SMALL_FAST_MODEL:-$MODEL}"
 
-# Force client-side /compact triggers when routed to non-Anthropic models.
-# OpenRouter doesn't support Anthropic's context-management-2025-06-27 header,
-# so Claude Code never auto-compacts on its own. We export the catalog's actual
-# context_length for the chosen model (1M for DeepSeek V4 Pro, 256K for Kimi K2.6,
-# etc.) and trigger compaction at 75% instead of ~92%. Users can override either
-# via CLAUDE_CODE_MAX_CONTEXT_TOKENS / CLAUDE_AUTOCOMPACT_PCT_OVERRIDE.
+# Claude Code limitation: when pointed at a non-Anthropic endpoint, it defaults
+# the context window to a hardcoded 200K regardless of the actual model. The env
+# var CLAUDE_CODE_MAX_CONTEXT_TOKENS only takes effect when DISABLE_COMPACT=1 is
+# *also* set — there's no way to get both auto-compaction AND the true window.
+#
+# Default: disable auto-compaction, expose the real window from the catalog
+# (1M for DeepSeek V4 Pro, 256K for Kimi K2.6, etc.). You can run /compact
+# manually when you want it.
+# Opt back to old behavior (auto-compact at 75% of a 200K cap) with
+# OPENROUTER_CLAUDE_AUTOCOMPACT=1.
 MODEL_CTX=200000
 # Look up in the rankings TSV first (already loaded for the picker).
 if [ -f "$CONFIG_DIR/rankings.v2.$RANK_VIEW.tsv" ]; then
@@ -487,7 +491,7 @@ fi
 if [ -z "${found_ctx:-}" ] || ! [ "$found_ctx" -gt 0 ] 2>/dev/null; then
   if [ -f "$MODELS_CACHE" ] && command -v python3 >/dev/null 2>&1; then
     found_ctx="$(python3 -c "
-import json, sys
+import json
 m = '''$MODEL'''
 try:
   for x in json.load(open('$MODELS_CACHE'))['data']:
@@ -498,9 +502,17 @@ except Exception: pass
   fi
 fi
 [ -n "${found_ctx:-}" ] && [ "$found_ctx" -gt 0 ] 2>/dev/null && MODEL_CTX="$found_ctx"
-export CLAUDE_CODE_MAX_CONTEXT_TOKENS="${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-$MODEL_CTX}"
-export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-75}"
-echo "openrouter-claude: context window = ${MODEL_CTX} tokens (compact at ${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE}%)" >&2
+
+if [ "${OPENROUTER_CLAUDE_AUTOCOMPACT:-0}" = "1" ]; then
+  # Auto-compact mode: keep CC's 200K assumption, trigger /compact at 75%.
+  export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE="${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:-75}"
+  echo "openrouter-claude: auto-compact ON (window pinned at CC's default ~200K, compact at ${CLAUDE_AUTOCOMPACT_PCT_OVERRIDE}%)" >&2
+else
+  # Real-window mode: disable auto-compact so CLAUDE_CODE_MAX_CONTEXT_TOKENS applies.
+  export DISABLE_COMPACT="${DISABLE_COMPACT:-1}"
+  export CLAUDE_CODE_MAX_CONTEXT_TOKENS="${CLAUDE_CODE_MAX_CONTEXT_TOKENS:-$MODEL_CTX}"
+  echo "openrouter-claude: context window = ${MODEL_CTX} tokens · auto-compact OFF (run /compact manually; OPENROUTER_CLAUDE_AUTOCOMPACT=1 to re-enable)" >&2
+fi
 
 # Pass --dangerously-skip-permissions by default. Opt out with OPENROUTER_CLAUDE_SAFE=1.
 SKIP_PERM_FLAG="--dangerously-skip-permissions"

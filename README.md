@@ -140,6 +140,29 @@ Anthropic tool over Tavily.
 won't be available in openrouter-claude sessions until you set a key.
 **Rotate:** edit or delete `~/.openrouter-claude/tavily-key` and re-launch.
 
+## Context window on non-Anthropic models
+
+Claude Code hardcodes a 200K window for unknown / non-Anthropic models —
+even if the model actually supports 1M (DeepSeek V4 Pro) or 256K (Kimi K2.6).
+The env var `CLAUDE_CODE_MAX_CONTEXT_TOKENS` only takes effect when
+`DISABLE_COMPACT=1` is *also* set. There's no way to get both auto-compaction
+and the true window.
+
+The launcher picks the **real window** by default:
+
+- Sets `DISABLE_COMPACT=1` and `CLAUDE_CODE_MAX_CONTEXT_TOKENS=<catalog value>`
+- DeepSeek V4 Pro shows as 1,000,000 tokens in `/context`, Kimi K2.6 as 256,000
+- Auto-compaction is off — run `/compact` yourself when you want to summarize
+
+If you'd rather have auto-compaction back (at the cost of a 200K cap):
+
+```bash
+OPENROUTER_CLAUDE_AUTOCOMPACT=1 openrouter-claude
+```
+
+That sets `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=75` and skips `DISABLE_COMPACT`,
+so Claude Code will auto-compact at 75% of its 200K assumption.
+
 ## Auto-compaction on non-Anthropic models
 
 Claude Code's built-in auto-compaction is a server-side feature gated by an
