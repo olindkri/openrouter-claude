@@ -215,9 +215,10 @@ done
 mkdir -p "$CONFIG_DIR"
 
 cache_age() {
-  local f="$1"
+  local f="$1" mtime
   [ -f "$f" ] || { echo 999999; return; }
-  echo "$(($(date +%s) - $(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f")))"
+  mtime="$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)"
+  echo "$(( $(date +%s) - mtime ))"
 }
 
 # Fetch /api/v1/models JSON (6h cache).
@@ -361,7 +362,7 @@ fzf_pick() {
   local tsv="$1"
   # Use python (already a dep) — macOS BSD awk truncates output at first NUL byte,
   # which breaks fzf --read0 entry separation.
-  python3 - "$tsv" <<'PY' | fzf --read0 --ansi --height=80% --reverse --gap=1 --gap-line=" " --gutter=" " --gutter-raw=" " --layout=reverse-list --pointer="▎ " --marker=" " --prompt="Select model for Claude Code: " --header="Type to filter — ↑↓ to move — Enter to launch — Esc to cancel — Ctrl+A to change API key" --no-info --no-scrollbar --expect=ctrl-a --color="header:dim,prompt:bold,pointer:cyan:bold,gutter:-1,bg+:-1,fg+:bright-white:bold,hl+:cyan:bold"
+  python3 - "$tsv" <<'PY' | fzf --read0 --ansi --height=80% --reverse --layout=reverse-list --pointer="▎ " --marker=" " --prompt="Select model for Claude Code: " --header="Type to filter — ↑↓ to move — Enter to launch — Esc to cancel — Ctrl+A to change API key" --no-info --expect=ctrl-a --color="header:dim,prompt:bold,pointer:cyan:bold,bg+:-1,fg+:bright-white:bold,hl+:cyan:bold"
 import sys
 C="\033[36m"; D="\033[2m"; R="\033[0m"
 out = sys.stdout.buffer
