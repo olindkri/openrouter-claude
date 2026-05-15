@@ -78,19 +78,35 @@ if ! command -v claude >/dev/null 2>&1; then
   echo "  install:  npm i -g @anthropic-ai/claude-code"
 fi
 
-# fzf check (offer to install via brew)
+# fzf check (offer to install via the first detected package manager)
 if ! command -v fzf >/dev/null 2>&1; then
+  FZF_CMD=""
+  FZF_LABEL=""
   if command -v brew >/dev/null 2>&1; then
+    FZF_CMD="brew install fzf"; FZF_LABEL="Homebrew"
+  elif command -v apt >/dev/null 2>&1; then
+    FZF_CMD="sudo apt install -y fzf"; FZF_LABEL="apt"
+  elif command -v dnf >/dev/null 2>&1; then
+    FZF_CMD="sudo dnf install -y fzf"; FZF_LABEL="dnf"
+  elif command -v pacman >/dev/null 2>&1; then
+    FZF_CMD="sudo pacman -S --noconfirm fzf"; FZF_LABEL="pacman"
+  elif command -v zypper >/dev/null 2>&1; then
+    FZF_CMD="sudo zypper install -y fzf"; FZF_LABEL="zypper"
+  elif command -v apk >/dev/null 2>&1; then
+    FZF_CMD="sudo apk add fzf"; FZF_LABEL="apk"
+  fi
+
+  if [ -n "$FZF_CMD" ]; then
     echo ""
-    printf "Install fzf via Homebrew for arrow-key picker? [Y/n] "
+    printf "Install fzf via %s for arrow-key picker? [Y/n] " "$FZF_LABEL"
     read -r ANS </dev/tty || ANS=""
     case "$ANS" in
-      n|N|no|NO) echo "  skipped (you can install later with: brew install fzf)" ;;
-      *)         brew install fzf ;;
+      n|N|no|NO) echo "  skipped (you can install later with: $FZF_CMD)" ;;
+      *)         eval "$FZF_CMD" || echo "  fzf install failed; launcher will fall back to a numbered prompt." ;;
     esac
   else
     echo ""
-    echo "Tip: install fzf for arrow-key model picking. (e.g. apt install fzf, dnf install fzf, brew install fzf)"
+    echo "Tip: install fzf for arrow-key model picking (no supported package manager detected)."
   fi
 fi
 
